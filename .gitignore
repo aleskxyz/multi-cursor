@@ -25,3 +25,5 @@ dist-ssr
 
 .cursor
 assets/originals
+# Linux packages from scripts/build-linux.sh
+dist-linux

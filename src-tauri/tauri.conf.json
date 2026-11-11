@@ -26,7 +26,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": "all",
+    "category": "DeveloperTool",
+    "publisher": "Cláudio Silva",
+    "shortDescription": "Switch between Cursor accounts and environments",
+    "longDescription": "Multi Cursor switches Cursor to the account and environment you choose. After switching, open Cursor as usual.",
     "macOS": {
       "minimumSystemVersion": "11.0"
     },

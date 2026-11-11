@@ -100,6 +100,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<UpdateCheckResult, Stri
 
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
+    // Opens in the default browser on every platform.
     let url = url.trim();
     if url.is_empty() {
         return Err("URL is required".to_string());
@@ -107,18 +108,5 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("Only http(s) URLs can be opened".to_string());
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(url)
-            .status()
-            .map_err(|e| format!("Failed to open URL: {e}"))?;
-        return Ok(());
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err("Opening URLs is only supported on macOS".to_string())
-    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| format!("Failed to open URL: {e}"))
 }

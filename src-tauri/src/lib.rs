@@ -4,6 +4,7 @@ mod commands;
 mod copy_progress;
 mod cursor;
 mod paths;
+mod platform;
 mod updates;
 mod window_frame;
 
@@ -147,7 +148,20 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    // macOS restores the window frame through AppKit autosave (window_frame.rs).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            // The window starts hidden and window_frame::attach shows it.
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::all()
+                    & !tauri_plugin_window_state::StateFlags::VISIBLE,
+            )
+            .build(),
+    );
+
+    builder
         .menu(build_menu)
         .on_menu_event(|app, event| {
             match event.id().as_ref() {

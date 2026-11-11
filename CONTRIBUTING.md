@@ -31,7 +31,15 @@ Multi Cursor manages real Cursor data. Test account and environment changes with
 
 - Cursor is closed before changes that rename folders or update authentication data.
 - A normal Dock or Spotlight launch opens the environment selected in Multi Cursor.
-- Removing an inactive environment sends its stored data to Trash.
+- Removing an inactive environment sends its stored data to Trash (Recycle Bin on Windows).
+
+On Linux and Windows, also check that:
+
+- Multi Cursor finds your Cursor install (or that `cursorAppPath` in `~/.multi-cursor/config.json` is honoured).
+- Switching environments right after Cursor quits works. On Windows, lingering Cursor helpers or antivirus scans can briefly lock files; Multi Cursor retries the folder rename for a few seconds.
+- Launch starts Cursor detached, so it keeps running after Multi Cursor quits.
+
+`cargo test` in `src-tauri/` runs a switch test against a temporary home folder; it never touches your real Cursor data.
 
 ## App icon
 

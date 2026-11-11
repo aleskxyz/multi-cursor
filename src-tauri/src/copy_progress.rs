@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -8,7 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::paths::move_to_trash;
+use crate::paths::{copy_symlink, move_to_trash};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,25 +73,27 @@ pub fn purge_vscdb_bak_files(global_storage: &Path) -> u64 {
     removed
 }
 
+/// Total size of regular files under `path` (symlinks are not followed).
 pub fn dir_size_bytes(path: &Path) -> u64 {
-    if !path.exists() {
-        return 0;
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // DirEntry::metadata does not traverse symlinks.
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if meta.is_file() {
+                total = total.saturating_add(meta.len());
+            }
+        }
     }
-    let output = Command::new("du")
-        .args(["-sk", &path.display().to_string()])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-    let Ok(out) = output else {
-        return 0;
-    };
-    let text = String::from_utf8_lossy(&out.stdout);
-    let kb: u64 = text
-        .split_whitespace()
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    kb.saturating_mul(1024)
+    total
 }
 
 fn is_excluded_dir_name(name: &str) -> bool {
@@ -196,6 +197,11 @@ fn copy_tree_native(src: &Path, dst: &Path, files_done: &AtomicU64) -> Result<()
                 .metadata()
                 .map_err(|e| friendly_copy_error(&e, &src_path))?;
 
+            if meta.file_type().is_symlink() {
+                // Extensions on Linux can contain symlinks; keep them as links.
+                copy_symlink(&src_path, &dst_path)?;
+                continue;
+            }
             if meta.is_dir() {
                 if should_skip_entry(&src_path, true) {
                     continue;
@@ -365,11 +371,10 @@ fn count_all_files(app: Option<&AppHandle>, path: &Path, running_total: &mut u64
 }
 
 fn emit_delete_progress(app: &AppHandle, done: u64, total: u64, label: &str) {
-    let percent = if total == 0 {
-        100
-    } else {
-        ((done.saturating_mul(100)) / total).min(99) as u8
-    };
+    let percent = done
+        .saturating_mul(100)
+        .checked_div(total)
+        .map_or(100, |p| p.min(99) as u8);
     emit_progress(
         app,
         percent,
@@ -446,6 +451,10 @@ pub fn trash_paths_with_progress(
         emit_delete_progress(app, done_before.min(progress_total), progress_total, label);
     }
 
-    emit_progress(app, 100, "Moved to Trash");
+    emit_progress(
+        app,
+        100,
+        format!("Moved to {}", crate::platform::trash_name()),
+    );
     Ok(())
 }

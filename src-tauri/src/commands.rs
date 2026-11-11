@@ -25,6 +25,10 @@ pub struct AppState {
     pub config: AppConfig,
     pub cursor_running: bool,
     pub root_dir: String,
+    /// `macos`, `linux`, or `windows`.
+    pub os: &'static str,
+    /// "Trash" or "Recycle Bin".
+    pub trash_name: &'static str,
 }
 
 fn state_from(cfg: AppConfig) -> Result<AppState, String> {
@@ -32,6 +36,8 @@ fn state_from(cfg: AppConfig) -> Result<AppState, String> {
         config: cfg,
         cursor_running: cursor_running(),
         root_dir: root_dir()?.display().to_string(),
+        os: crate::platform::os_id(),
+        trash_name: crate::platform::trash_name(),
     })
 }
 
@@ -428,7 +434,7 @@ pub async fn copy_environment_from_current(
         ));
     }
 
-    emit_progress(&app, 0, "Copying Application Support…");
+    emit_progress(&app, 0, "Copying Cursor data…");
 
     let app_copy = app.clone();
     let copy_id = env_id.clone();
@@ -438,7 +444,7 @@ pub async fn copy_environment_from_current(
                 &app_copy,
                 &src_data,
                 &dst_data,
-                "Copying Application Support…",
+                "Copying Cursor data…",
                 0,
                 50,
             )?;
@@ -524,11 +530,11 @@ pub async fn delete_environment(app: AppHandle, id: String) -> Result<AppState, 
     let paths = vec![
         (
             inactive_data_dir(&id)?,
-            "Moving Application Support to Trash…".to_string(),
+            format!("Moving Cursor data to {}…", crate::platform::trash_name()),
         ),
         (
             inactive_dot_cursor_dir(&id)?,
-            "Moving ~/.cursor to Trash…".to_string(),
+            format!("Moving ~/.cursor to {}…", crate::platform::trash_name()),
         ),
         (
             root_dir()?.join("accounts").join(&id),
@@ -545,7 +551,11 @@ pub async fn delete_environment(app: AppHandle, id: String) -> Result<AppState, 
     cfg.environments.retain(|e| e.id != id);
     cfg.accounts.retain(|a| a.env_id != id);
     save_config(&cfg)?;
-    emit_progress(&app, 100, "Moved to Trash");
+    emit_progress(
+        &app,
+        100,
+        format!("Moved to {}", crate::platform::trash_name()),
+    );
     state_from(cfg)
 }
 
@@ -582,7 +592,7 @@ pub fn create_account(env_id: String) -> Result<AppState, String> {
     cfg.active.account_id = Some(id);
     save_config(&cfg)?;
 
-    launch_cursor(&cfg.cursor_app_path)?;
+    launch_cursor(&cfg.cursor_launch())?;
     state_from(cfg)
 }
 
@@ -670,7 +680,7 @@ pub fn launch(env_id: String, account_id: Option<String>) -> Result<AppState, St
         save_config(&cfg)?;
     }
 
-    launch_cursor(&cfg.cursor_app_path)?;
+    launch_cursor(&cfg.cursor_launch())?;
     state_from(cfg)
 }
 

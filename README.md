@@ -8,12 +8,12 @@
 
 Cursor currently supports one signed-in account per installation. If you move between work and personal accounts (or need fully independent Cursor setups) you would normally sign out and back in repeatedly, use launch scripts, or keep alternate data folders by hand.
 
-**Multi Cursor** is a small macOS companion app that switches [Cursor](https://cursor.com) to the account and environment you choose. After switching, you just open Cursor as usual.
+**Multi Cursor** is a small companion app for macOS, Windows and Linux that switches [Cursor](https://cursor.com) to the account and environment you choose. After switching, you just open Cursor as usual.
 
 ### Features
 
 * Switch between multiple Cursor accounts
-* Launch Cursor normally from the Dock, Spotlight, Finder, or Terminal
+* Launch Cursor normally: from the Dock or Spotlight, the Start menu or taskbar, your app launcher, or the terminal
 * No wrapper scripts or special launch commands
 * Switch accounts without duplicating environment data, or
 * Create fully isolated Cursor environments
@@ -27,7 +27,7 @@ Cursor currently supports one signed-in account per installation. If you move be
 
 ## The key idea
 
-Most alternatives require a special way to launch Cursor every time. Multi Cursor does not. **Once you've selected an account or environment, that becomes your current Cursor setup.** Opening `/Applications/Cursor.app` works just as it always did, with the right history, settings, extensions, and login already in place.
+Most alternatives require a special way to launch Cursor every time. Multi Cursor does not. **Once you've selected an account or environment, that becomes your current Cursor setup.** Opening Cursor the usual way works just as it always did, with the right history, settings, extensions, and login already in place.
 
 Multi Cursor is not a wrapper around Cursor. It is a companion app that prepares Cursor's normal data folders, then opens Cursor normally.
 
@@ -64,21 +64,45 @@ Building a local copy typically takes only a few minutes.
 
 ## Platform support
 
-Multi Cursor is compatible with macOS 11 or later.
+| Platform | Architectures | Status |
+| -------- | ------------- | ------ |
+| macOS 11 or later | Apple Silicon and Intel (universal app) | Supported |
+| Linux (WebKitGTK 4.1) | x64, arm64 | Experimental |
+| Windows 10 / 11 | x64, arm64 | Experimental |
 
-### What about Windows and Linux?
-
-Windows and Linux are not supported yet.
-
-Contributions are welcome; see [Contributing](CONTRIBUTING.md).
+Linux and Windows use the same approach as macOS: they rename Cursor's normal data folders and swap the `cursorAuth/*` keys. They have had less real-world testing, so keep backups and please report issues. Contributions are welcome; see [Contributing](CONTRIBUTING.md).
 
 ## Requirements
 
-- macOS 11 or later
+All platforms:
+
 - [Node.js](https://nodejs.org/) 20 or later
 - [Rust](https://rustup.rs/) (`rustup` / `cargo`)
+
+macOS:
+
 - Xcode Command Line Tools: `xcode-select --install`
-- Cursor installed at `/Applications/Cursor.app` (configurable with `cursorAppPath` in `~/.multi-cursor/config.json`)
+
+Linux (Debian/Ubuntu package names; see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for other distros):
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential
+```
+
+Windows:
+
+- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) ("Desktop development with C++")
+- WebView2 (preinstalled on Windows 10 21H2+ and Windows 11)
+
+Multi Cursor finds Cursor automatically in its default install location:
+
+| Platform | Default Cursor location |
+| -------- | ----------------------- |
+| macOS | `/Applications/Cursor.app` |
+| Linux | The official `.deb` / `.rpm` install (`/usr/share/cursor/cursor`); otherwise a desktop entry named "Cursor" (how AppImage integration tools register it, wherever the file lives); otherwise the newest `Cursor*.AppImage` in `~/Applications`, `~/AppImages`, `~/Apps`, `~/.local/bin`, `~/bin`, `~/Downloads` or `/opt`; otherwise `cursor` on `PATH` |
+| Windows | `%LOCALAPPDATA%\Programs\cursor\Cursor.exe`, or `%ProgramFiles%\Cursor\Cursor.exe` |
+
+To use a different location, set `cursorAppPath` in `~/.multi-cursor/config.json`.
 
 ## Install
 
@@ -96,6 +120,25 @@ Build a release app:
 ```bash
 npm run tauri build
 ```
+
+#### Linux and Windows
+
+`npm run tauri build` produces installers under `src-tauri/target/release/bundle/`:
+
+- Linux: `deb/`, `rpm/`, and `appimage/`
+- Windows: `nsis/` (setup `.exe`) and `msi/`
+
+Install one of them the usual way for your system. The steps below are for macOS only.
+
+Linux packages only run on distributions whose glibc is at least as new as the build machine's, so packages built on a recent distro won't run on older ones. To build packages that work on Ubuntu 22.04+, Debian 12+, Fedora 36+ and similar, build inside an Ubuntu 22.04 container (requires Docker):
+
+```bash
+scripts/build-linux.sh   # writes .deb, .rpm and .AppImage to dist-linux/
+```
+
+The AppImage uses the system's graphics, font and sound libraries (OpenGL/EGL, X11/Wayland, fontconfig, HarfBuzz, ALSA), which every desktop installation has.
+
+#### macOS
 
 The build output is `src-tauri/target/release/bundle/macos/Multi Cursor.app`. Consider it a build artifact; you'll want to install and use a copy in `~/Applications` instead, so run:
 
@@ -149,7 +192,7 @@ xattr -dr com.apple.quarantine "$HOME/Applications/Multi Cursor.app"
 1. Choose an environment. The current one is labelled.
 2. Select an account. The current account has a **current** badge; a pending login has a temporary **Signing in…** label.
 3. Click **Launch**, or double-click the account.
-4. After switching, next time you open Cursor, it will be in the selected environment and account. You can continue to use Cursor normally from the Dock, Spotlight, Finder, or `/Applications/Cursor.app` until you need to switch again.
+4. After switching, next time you open Cursor, it will be in the selected environment and account. You can keep opening Cursor however you normally do until you need to switch again.
 
 When switching, Multi Cursor closes Cursor if necessary, activates the selected data and login, then reopens Cursor. **Launch** is disabled when Cursor is already running with the selected account and environment.
 
@@ -170,7 +213,7 @@ When switching, Multi Cursor closes Cursor if necessary, activates the selected 
 
 ## How it works
 
-Multi Cursor does not require flags or a launcher script. It makes Cursor's normal data folders match the selection, then starts Cursor as any other Mac app would.
+Multi Cursor does not require flags or a launcher script. It makes Cursor's normal data folders match the selection, then starts Cursor the way your system normally would.
 
 ### Accounts: lightweight switching
 
@@ -193,14 +236,17 @@ Within one environment, history, settings, and extensions stay the same; only th
 
 Cursor always reads these locations:
 
-- `~/Library/Application Support/Cursor`
-- `~/.cursor`
+| | User data | Extensions / CLI state |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/Cursor` | `~/.cursor` |
+| Linux | `~/.config/Cursor` (or `$XDG_CONFIG_HOME/Cursor`) | `~/.cursor` |
+| Windows | `%APPDATA%\Cursor` | `%USERPROFILE%\.cursor` |
 
-Inactive environments live alongside them as `Cursor.multi-cursor.<id>` and `.cursor.multi-cursor.<id>`. On a switch, Multi Cursor renames the chosen folders into Cursor's normal paths. Cursor must be closed first, but the normal paths are why everyday Dock and Spotlight launches still work.
+Inactive environments live alongside them as `Cursor.multi-cursor.<id>` and `.cursor.multi-cursor.<id>`. On a switch, Multi Cursor renames the chosen folders into Cursor's normal paths. Cursor must be closed first, but the normal paths are why everyday launches (Dock, Start menu, app launcher, terminal) still work.
 
 ```mermaid
 flowchart TB
-  subgraph live["What Cursor.app always opens"]
+  subgraph live["What Cursor always opens"]
     AS["Application Support/Cursor"]
     DOT["~/.cursor"]
   end
@@ -216,7 +262,7 @@ flowchart TB
 
 It provides the isolation people seek from `--user-data-dir`, while retaining the ordinary Cursor launch workflow.
 
-**Data layout** (click to expand)
+**Data layout** (macOS shown; on Linux and Windows the first block is in `~/.config` or `%APPDATA%` instead)
 
 ```
 ~/Library/Application Support/
@@ -237,7 +283,7 @@ It provides the isolation people seek from `--user-data-dir`, while retaining th
 - Folder renames and authentication-database writes happen only after Cursor has quit.
 - Account snapshots contain only `cursorAuth/*` keys; Multi Cursor never copies the complete `state.vscdb` on every switch.
 - Environment copies skip caches and `state.vscdb.bak-*` files. Leftover live-profile backups are cleaned up on startup to reclaim disk space.
-- Deleting an inactive environment moves its pool folders to Trash. Multi Cursor never deletes the live `Cursor` or `~/.cursor` folders.
+- Deleting an inactive environment moves its pool folders to Trash (Recycle Bin on Windows). Multi Cursor never deletes the live `Cursor` or `~/.cursor` folders.
 
 ## FAQ
 
@@ -247,7 +293,7 @@ Profiles separate editor preferences and extensions, but Cursor still has one si
 
 ### Why not use `--user-data-dir`?
 
-It is a valid way to isolate data, but every launch must use the right command. Multi Cursor activates the selected environment in Cursor's default locations, so Dock and Spotlight launches keep working.
+It is a valid way to isolate data, but every launch must use the right command. Multi Cursor activates the selected environment in Cursor's default locations, so everyday launches keep working.
 
 ### Does it duplicate all my Cursor data when I switch accounts?
 

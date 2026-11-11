@@ -49,36 +49,33 @@ pub struct ActiveSelection {
     pub account_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub environments: Vec<Environment>,
     pub accounts: Vec<Account>,
     #[serde(default)]
     pub active: ActiveSelection,
-    #[serde(default = "default_cursor_app_path")]
-    pub cursor_app_path: String,
+    /// Where Cursor is installed. `None` means auto-detect for this OS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_app_path: Option<String>,
 }
 
-fn default_cursor_app_path() -> String {
-    "/Applications/Cursor.app".to_string()
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            environments: Vec::new(),
-            accounts: Vec::new(),
-            active: ActiveSelection::default(),
-            cursor_app_path: default_cursor_app_path(),
-        }
+impl AppConfig {
+    /// How to start Cursor: the configured location, or the detected default
+    /// (with any arguments its desktop entry asks for) for this OS.
+    pub fn cursor_launch(&self) -> crate::platform::CursorLaunch {
+        self.cursor_app_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(crate::platform::CursorLaunch::program)
+            .unwrap_or_else(crate::platform::default_cursor_launch)
     }
 }
 
 pub fn home_dir() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "HOME is not set".to_string())
+    crate::platform::home_dir()
 }
 
 pub fn root_dir() -> Result<PathBuf, String> {
@@ -89,13 +86,14 @@ pub fn config_path() -> Result<PathBuf, String> {
     Ok(root_dir()?.join("config.json"))
 }
 
+/// Parent folder of Cursor's user-data dir (Application Support / ~/.config / %APPDATA%).
 pub fn application_support_dir() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join("Library").join("Application Support"))
+    crate::platform::cursor_data_parent()
 }
 
-/// Active Cursor user-data dir (what Dock launches use).
+/// Active Cursor user-data dir (what normal launches use).
 pub fn active_data_dir() -> Result<PathBuf, String> {
-    Ok(application_support_dir()?.join("Cursor"))
+    Ok(application_support_dir()?.join(crate::platform::CURSOR_DATA_DIR_NAME))
 }
 
 /// Inactive pool entry for an environment's user-data dir.
@@ -159,7 +157,15 @@ pub fn load_config() -> Result<AppConfig, String> {
         return Ok(cfg);
     }
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| format!("Invalid config.json: {e}"))
+    let mut cfg: AppConfig =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid config.json: {e}"))?;
+    // Older builds always stored the macOS default; let other OSes auto-detect.
+    if !cfg!(target_os = "macos")
+        && cfg.cursor_app_path.as_deref() == Some(crate::platform::LEGACY_MACOS_APP_PATH)
+    {
+        cfg.cursor_app_path = None;
+    }
+    Ok(cfg)
 }
 
 pub fn save_config(cfg: &AppConfig) -> Result<(), String> {
@@ -289,31 +295,60 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         fs::remove_dir_all(dst).map_err(|e| format!("Clear destination {}: {e}", dst.display()))?;
     }
 
-    let status = std::process::Command::new("ditto")
-        .arg(src)
-        .arg(dst)
-        .status()
-        .map_err(|e| format!("ditto failed to start: {e}"))?;
-    if status.success() {
-        return Ok(());
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("ditto")
+            .arg(src)
+            .arg(dst)
+            .status()
+            .map_err(|e| format!("ditto failed to start: {e}"))?;
+        if status.success() {
+            return Ok(());
+        }
     }
 
+    copy_tree_portable(src, dst)
+}
+
+fn copy_tree_portable(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| e.to_string())?;
     for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let ty = entry.file_type().map_err(|e| e.to_string())?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_recursive(&from, &to)?;
+        if ty.is_symlink() {
+            copy_symlink(&from, &to)?;
+        } else if ty.is_dir() {
+            copy_tree_portable(&from, &to)?;
         } else if ty.is_file() {
-            if let Some(parent) = to.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
             fs::copy(&from, &to).map_err(|e| e.to_string())?;
         }
     }
     Ok(())
+}
+
+/// Recreate a symlink (Unix), or copy what it points to (Windows, where
+/// creating symlinks usually needs elevated rights).
+pub fn copy_symlink(from: &Path, to: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let target = fs::read_link(from).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&target, to)
+            .map_err(|e| format!("Symlink {}: {e}", to.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let meta = match fs::metadata(from) {
+            Ok(m) => m,
+            Err(_) => return Ok(()), // dangling link: skip
+        };
+        if meta.is_dir() {
+            copy_tree_portable(from, to)
+        } else {
+            fs::copy(from, to).map(|_| ()).map_err(|e| e.to_string())
+        }
+    }
 }
 
 fn rename_path(from: &Path, to: &Path) -> Result<(), String> {
@@ -327,13 +362,45 @@ fn rename_path(from: &Path, to: &Path) -> Result<(), String> {
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    fs::rename(from, to).map_err(|e| {
+    rename_with_retry(from, to).map_err(|e| {
+        let hint = if is_in_use_error(&e) {
+            " (a file inside is still in use — make sure Cursor has fully quit)"
+        } else {
+            ""
+        };
         format!(
-            "Failed to rename {} → {}: {e}",
+            "Failed to rename {} → {}: {e}{hint}",
             from.display(),
             to.display()
         )
     })
+}
+
+/// On Windows a directory can't be renamed while any file inside is open
+/// (lingering Cursor helpers, antivirus, the search indexer). Those handles
+/// usually go away within a few seconds, so retry briefly.
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    const ATTEMPTS: u32 = if cfg!(windows) { 15 } else { 1 };
+    let mut last = None;
+    for attempt in 0..ATTEMPTS {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_in_use_error(&e) && attempt + 1 < ATTEMPTS => {
+                last = Some(e);
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("rename failed")))
+}
+
+fn is_in_use_error(e: &std::io::Error) -> bool {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+    // ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33) on Windows.
+    cfg!(windows) && matches!(e.raw_os_error(), Some(32) | Some(33))
 }
 
 /// Atomically (as far as rename allows) make `to_env_id` the live Cursor / ~/.cursor.
@@ -392,23 +459,39 @@ pub fn activate_environment_dirs(
         )
     };
 
-    if active_data.exists() {
-        rename_path(&active_data, &park_data)?;
-    } else {
-        fs::create_dir_all(&park_data).map_err(|e| e.to_string())?;
-        fs::create_dir_all(park_data.join("User").join("globalStorage"))
-            .map_err(|e| e.to_string())?;
-    }
-    if active_dot.exists() {
-        rename_path(&active_dot, &park_dot)?;
-    } else {
-        fs::create_dir_all(&park_dot).map_err(|e| e.to_string())?;
-    }
+    // Each completed rename is recorded so a later failure can undo it and
+    // leave the live folders exactly as they were.
+    let mut done: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let result = (|| -> Result<(), String> {
+        if active_data.exists() {
+            rename_path(&active_data, &park_data)?;
+            done.push((active_data.clone(), park_data.clone()));
+        } else {
+            fs::create_dir_all(park_data.join("User").join("globalStorage"))
+                .map_err(|e| e.to_string())?;
+        }
+        if active_dot.exists() {
+            rename_path(&active_dot, &park_dot)?;
+            done.push((active_dot.clone(), park_dot.clone()));
+        } else {
+            fs::create_dir_all(&park_dot).map_err(|e| e.to_string())?;
+        }
 
-    // 2) Promote target inactive dirs to live names.
-    rename_path(&to_data, &active_data)?;
-    rename_path(&to_dot, &active_dot)?;
+        // 2) Promote target inactive dirs to live names.
+        rename_path(&to_data, &active_data)?;
+        done.push((to_data.clone(), active_data.clone()));
+        rename_path(&to_dot, &active_dot)?;
+        Ok(())
+    })();
 
+    if let Err(err) = result {
+        for (orig, moved) in done.into_iter().rev() {
+            if let Err(undo) = rename_path(&moved, &orig) {
+                return Err(format!("{err}. Rolling back also failed: {undo}"));
+            }
+        }
+        return Err(err);
+    }
     Ok(())
 }
 
@@ -416,12 +499,34 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
     }
-    let trash_cli = std::process::Command::new("trash").arg(path).output();
-    if let Ok(out) = trash_cli {
-        if out.status.success() {
-            return Ok(());
+    #[cfg(not(target_os = "macos"))]
+    {
+        trash::delete(path).map_err(|e| {
+            format!(
+                "Failed to move {} to the {}: {e}",
+                path.display(),
+                crate::platform::trash_name()
+            )
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // NSFileManager needs no permission prompt. The trash crate's default
+        // (Finder via AppleScript) asks to control Finder, so keep that as
+        // the fallback only.
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut ctx = trash::TrashContext::default();
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        match ctx.delete(path) {
+            Ok(()) => Ok(()),
+            Err(_) => move_to_trash_finder(path),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn move_to_trash_finder(path: &Path) -> Result<(), String> {
     let posix = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf())
@@ -440,5 +545,73 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("Failed to move to Trash: {}", path.display()))
+    }
+}
+
+/// Serialises sandboxed tests and points every home / Cursor data path at a
+/// fresh temp dir until dropped, on every OS (see `platform::TEST_ROOT`).
+#[cfg(test)]
+pub(crate) struct SandboxGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for SandboxGuard {
+    fn drop(&mut self) {
+        *crate::platform::TEST_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+/// Fresh temp root for a test; real Cursor data is never touched.
+#[cfg(test)]
+pub(crate) fn test_sandbox() -> (SandboxGuard, PathBuf) {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("multi-cursor-test-{}", new_id()));
+    fs::create_dir_all(&dir).unwrap();
+    *crate::platform::TEST_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir.clone());
+    // Fail loudly rather than ever running against real data.
+    assert!(home_dir().unwrap().starts_with(&dir));
+    assert!(active_data_dir().unwrap().starts_with(&dir));
+    (SandboxGuard { _lock: lock }, dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switch_environment_dirs() {
+        let (_guard, root) = test_sandbox();
+        assert!(active_data_dir().unwrap().starts_with(&root));
+
+        // Live env "a" with a marker file; inactive env "b" in the pool.
+        ensure_active_dirs().unwrap();
+        fs::write(active_data_dir().unwrap().join("marker"), "a").unwrap();
+        prepare_inactive_environment("b").unwrap();
+        fs::write(inactive_data_dir("b").unwrap().join("marker"), "b").unwrap();
+
+        activate_environment_dirs(Some("a"), "b").unwrap();
+        let live_marker = active_data_dir().unwrap().join("marker");
+        assert_eq!(fs::read_to_string(&live_marker).unwrap(), "b");
+        assert_eq!(
+            fs::read_to_string(inactive_data_dir("a").unwrap().join("marker")).unwrap(),
+            "a"
+        );
+        assert!(inactive_dot_cursor_dir("a").unwrap().exists());
+
+        // Target "c" has data but no ~/.cursor pool entry → precondition error, nothing moved.
+        prepare_inactive_environment("c").unwrap();
+        fs::remove_dir_all(inactive_dot_cursor_dir("c").unwrap()).unwrap();
+        assert!(activate_environment_dirs(Some("b"), "c").is_err());
+        assert_eq!(fs::read_to_string(&live_marker).unwrap(), "b");
+
+        // Trash works on this platform.
+        let junk = root.join("junk");
+        fs::create_dir_all(&junk).unwrap();
+        move_to_trash(&junk).unwrap();
+        assert!(!junk.exists());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

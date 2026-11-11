@@ -4,8 +4,11 @@
 //! displays (Retina laptop + 1× externals). AppKit's frame autosave speaks the
 //! same coordinate space as the Dock and handles multi-monitor correctly.
 
-use tauri::{AppHandle, Manager, RunEvent, WebviewWindow};
+use tauri::{AppHandle, Manager, RunEvent};
+#[cfg(target_os = "macos")]
+use tauri::WebviewWindow;
 
+#[cfg(target_os = "macos")]
 const AUTOSAVE_NAME: &str = "MultiCursorMainWindow";
 
 #[cfg(target_os = "macos")]

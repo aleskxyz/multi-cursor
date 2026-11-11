@@ -25,13 +25,15 @@ interface AppConfig {
   environments: Environment[];
   accounts: Account[];
   active: ActiveSelection;
-  cursorAppPath: string;
+  cursorAppPath?: string | null;
 }
 
 interface AppState {
   config: AppConfig;
   cursorRunning: boolean;
   rootDir: string;
+  os: "macos" | "linux" | "windows" | string;
+  trashName: string;
 }
 
 interface ListStateResult {
@@ -449,6 +451,7 @@ async function refreshEnvDiskUsage(force = false) {
 function render() {
   if (!state) return;
   const { config, cursorRunning } = state;
+  document.documentElement.dataset.os = state.os;
 
   els.status.textContent = cursorRunning ? "Cursor running" : "Cursor idle";
   els.status.classList.toggle("running", cursorRunning);
@@ -794,7 +797,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const result = await askTextWithCheckbox({
       title: "New environment",
       confirmLabel: "Create",
-      checkboxLabel: "Copy current environment (Application Support + ~/.cursor)",
+      checkboxLabel: "Copy current environment (Cursor data, settings and extensions)",
       checkboxDefault: true,
     });
     if (!result) return;
@@ -918,10 +921,11 @@ window.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const current = state.config.environments.find((e) => e.id === selectedEnvId);
+    const trashName = state.trashName || "Trash";
     const ok = await askConfirm(
       "Delete environment?",
-      `Move “${current?.name ?? "this environment"}” (inactive data + ~/.cursor pool + saved logins) to Trash?`,
-      "Move to Trash",
+      `Move “${current?.name ?? "this environment"}” (inactive data + ~/.cursor pool + saved logins) to ${trashName}?`,
+      `Move to ${trashName}`,
       true,
     );
     if (!ok) return;
@@ -944,7 +948,7 @@ window.addEventListener("DOMContentLoaded", () => {
       userPickedAccount = false;
       diskUsageEnvId = null;
       setProgress(null);
-      showSuccess("Environment moved to Trash.");
+      showSuccess(`Environment moved to ${trashName}.`);
     } catch (err) {
       setProgress(null);
       if (typeof err === "string") showError(err);

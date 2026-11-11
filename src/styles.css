@@ -142,6 +142,24 @@ select {
   padding: 8px 10px;
 }
 
+/* WebKitGTK (Linux) draws native selects with the GTK theme and ignores the
+   background above, leaving light-on-light text. Draw our own instead.
+   macOS keeps its native control. */
+html:not([data-os="macos"]) select {
+  -webkit-appearance: none;
+  appearance: none;
+  color-scheme: dark;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%239aa0b0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+html:not([data-os="macos"]) select option {
+  background: #101218;
+  color: var(--text);
+}
+
 .check {
   display: flex;
   align-items: center;
