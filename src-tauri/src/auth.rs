@@ -75,15 +75,16 @@ pub fn read_auth_keys(db_path: &Path) -> Result<AuthSnapshot, String> {
 
     let tmp_dir = std::env::temp_dir().join(format!("multi-cursor-{}", Uuid::new_v4()));
     let tmp_db = tmp_dir.join("state.vscdb");
-    copy_db_tree(db_path, &tmp_db)?;
-    let snap = {
+    let result = (|| {
+        copy_db_tree(db_path, &tmp_db)?;
         let conn = Connection::open_with_flags(&tmp_db, flags)
             .map_err(|e| format!("Open copied state.vscdb: {e}"))?;
         let _ = conn.busy_timeout(Duration::from_millis(1000));
-        read_auth_keys_from_conn(&conn)?
-    };
+        read_auth_keys_from_conn(&conn)
+    })();
+    // Always remove the copy (it can be large), including on failure.
     let _ = fs::remove_dir_all(&tmp_dir);
-    Ok(snap)
+    result
 }
 
 fn ensure_item_table(conn: &Connection) -> Result<(), String> {
@@ -102,26 +103,32 @@ pub fn write_auth_keys(db_path: &Path, snap: &AuthSnapshot) -> Result<(), String
     }
     // Do not full-file-backup state.vscdb — it can be multi‑GB. Account snapshots
     // under ~/.multi-cursor/accounts/ are the rollback mechanism.
-    let conn = Connection::open(db_path).map_err(|e| format!("Open state.vscdb: {e}"))?;
+    let mut conn = Connection::open(db_path).map_err(|e| format!("Open state.vscdb: {e}"))?;
+    let _ = conn.busy_timeout(Duration::from_millis(3000));
     ensure_item_table(&conn)?;
 
+    // One transaction: a failure part-way must not leave the old keys deleted
+    // but the new ones unwritten (signed out with no way back).
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("Begin transaction: {e}"))?;
     // Clear known auth keys first, then write snapshot values.
     for key in AUTH_KEYS {
-        conn.execute("DELETE FROM ItemTable WHERE key = ?1", params![key])
+        tx.execute("DELETE FROM ItemTable WHERE key = ?1", params![key])
             .map_err(|e| format!("Delete key {key}: {e}"))?;
     }
     for (key, value) in &snap.keys {
         if !AUTH_KEYS.contains(&key.as_str()) {
             continue;
         }
-        conn.execute(
+        tx.execute(
             "INSERT INTO ItemTable (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )
         .map_err(|e| format!("Write key {key}: {e}"))?;
     }
-    Ok(())
+    tx.commit().map_err(|e| format!("Save auth keys: {e}"))
 }
 
 pub fn clear_auth_keys(db_path: &Path) -> Result<(), String> {

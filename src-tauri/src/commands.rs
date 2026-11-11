@@ -770,18 +770,6 @@ pub fn delete_account(id: String) -> Result<AppState, String> {
 }
 
 #[tauri::command]
-pub fn switch_account(env_id: String, account_id: String) -> Result<AppState, String> {
-    if cursor_running() {
-        return Err(
-            "Cursor is still running. Wait for it to quit before switching accounts.".to_string(),
-        );
-    }
-    let mut cfg = load_config()?;
-    apply_account(&mut cfg, &env_id, &account_id)?;
-    state_from(cfg)
-}
-
-#[tauri::command]
 pub fn launch(env_id: String, account_id: Option<String>) -> Result<AppState, String> {
     let mut cfg = load_config()?;
     bootstrap_default_environment(&mut cfg)?;

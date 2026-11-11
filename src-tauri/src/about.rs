@@ -1,7 +1,15 @@
 //! Native About panel content for Multi Cursor.
 
 pub const APP_NAME: &str = "Multi Cursor";
-pub const REPO_URL: &str = "https://github.com/claudio-silva/multi-cursor";
+/// GitHub `owner/name`; the single place to change the repository used for
+/// the About link and the update check.
+macro_rules! repo_slug {
+    () => {
+        "claudio-silva/multi-cursor"
+    };
+}
+pub const REPO_SLUG: &str = repo_slug!();
+pub const REPO_URL: &str = concat!("https://github.com/", repo_slug!());
 
 const DESCRIPTION: &str = "Switch between Cursor accounts and isolated environments.";
 const COPYRIGHT: &str = "© 2026 Cláudio Silva";

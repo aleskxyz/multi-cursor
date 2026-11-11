@@ -3,10 +3,11 @@
 use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::about::REPO_URL;
+use crate::about::{REPO_SLUG, REPO_URL};
 
-const LATEST_RELEASE_API: &str =
-    "https://api.github.com/repos/claudio-silva/multi-cursor/releases/latest";
+fn latest_release_api() -> String {
+    format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest")
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,21 +29,49 @@ fn normalize_version(raw: &str) -> String {
     raw.trim().trim_start_matches(['v', 'V']).to_string()
 }
 
-fn parse_semver(raw: &str) -> Option<(u64, u64, u64)> {
+/// `(major, minor, patch, is_prerelease)`; build metadata (`+…`) is ignored.
+fn parse_semver(raw: &str) -> Option<(u64, u64, u64, bool)> {
     let s = normalize_version(raw);
-    let mut parts = s.split('.');
+    let s = s.split('+').next().unwrap_or("");
+    let (core, pre) = match s.split_once('-') {
+        Some((core, pre)) => (core, !pre.is_empty()),
+        None => (s, false),
+    };
+    let mut parts = core.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next().unwrap_or("0").parse().ok()?;
     let patch = parts.next().unwrap_or("0").parse().ok()?;
-    Some((major, minor, patch))
+    Some((major, minor, patch, pre))
 }
 
+/// True when `latest` is a newer version than `current`. A release beats a
+/// pre-release of the same version (1.2.0 > 1.2.0-beta.1).
 fn is_newer(latest: &str, current: &str) -> Result<bool, String> {
-    let latest_v = parse_semver(latest)
+    let (l1, l2, l3, l_pre) = parse_semver(latest)
         .ok_or_else(|| format!("Could not parse latest version \"{latest}\""))?;
-    let current_v = parse_semver(current)
+    let (c1, c2, c3, c_pre) = parse_semver(current)
         .ok_or_else(|| format!("Could not parse current version \"{current}\""))?;
-    Ok(latest_v > current_v)
+    Ok(match (l1, l2, l3).cmp(&(c1, c2, c3)) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => c_pre && !l_pre,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_newer;
+
+    #[test]
+    fn version_comparison() {
+        assert!(is_newer("v1.2.0", "1.1.9").unwrap());
+        assert!(!is_newer("1.2.0", "1.2.0").unwrap());
+        assert!(!is_newer("1.1.0", "1.2.0").unwrap());
+        assert!(is_newer("1.2.0", "1.2.0-beta.1").unwrap());
+        assert!(!is_newer("1.2.0-beta.2", "1.2.0").unwrap());
+        assert!(is_newer("1.10.0", "1.9.0").unwrap());
+        assert!(!is_newer("1.2.0+build.5", "1.2.0").unwrap());
+    }
 }
 
 #[tauri::command]
@@ -51,11 +80,12 @@ pub async fn check_for_updates(app: AppHandle) -> Result<UpdateCheckResult, Stri
 
     let client = reqwest::Client::builder()
         .user_agent(format!("multi-cursor/{current_version}"))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
     let response = client
-        .get(LATEST_RELEASE_API)
+        .get(latest_release_api())
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
