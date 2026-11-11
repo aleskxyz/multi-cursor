@@ -3,12 +3,35 @@
 pub const APP_NAME: &str = "Multi Cursor";
 pub const REPO_URL: &str = "https://github.com/claudio-silva/multi-cursor";
 
-const CREDITS_INTRO: &str =
-    "\nSwitch between Cursor accounts and isolated environments.\n\n© 2026 Cláudio Silva\n";
+const DESCRIPTION: &str = "Switch between Cursor accounts and isolated environments.";
+const COPYRIGHT: &str = "© 2026 Cláudio Silva";
 
 /// Credits text including the repository URL (used where attributed links are unavailable).
+#[cfg(target_os = "macos")]
 pub fn credits_text() -> String {
-    format!("{CREDITS_INTRO}{REPO_URL}")
+    format!("\n{DESCRIPTION}\n\n{COPYRIGHT}\n{REPO_URL}")
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutInfo {
+    name: &'static str,
+    version: String,
+    description: &'static str,
+    copyright: &'static str,
+    repo_url: &'static str,
+}
+
+/// About details for the in-window About dialog (Linux / Windows have no app menu).
+#[tauri::command]
+pub fn about_info(app: tauri::AppHandle) -> AboutInfo {
+    AboutInfo {
+        name: APP_NAME,
+        version: app.package_info().version.to_string(),
+        description: DESCRIPTION,
+        copyright: COPYRIGHT,
+        repo_url: REPO_URL,
+    }
 }
 
 /// Show the macOS standard About panel with a clickable repository link in credits.

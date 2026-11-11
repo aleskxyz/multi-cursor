@@ -88,7 +88,19 @@ const els = {
   modalCheckLabel: document.querySelector("#modal-check-label") as HTMLElement,
   modalCancel: document.querySelector("#modal-cancel") as HTMLButtonElement,
   modalConfirm: document.querySelector("#modal-confirm") as HTMLButtonElement,
+  footerLinks: document.querySelector("#footer-links") as HTMLElement,
+  footerVersion: document.querySelector("#footer-version") as HTMLElement,
+  aboutLink: document.querySelector("#about-link") as HTMLButtonElement,
+  updatesLink: document.querySelector("#updates-link") as HTMLButtonElement,
 };
+
+interface AboutInfo {
+  name: string;
+  version: string;
+  description: string;
+  copyright: string;
+  repoUrl: string;
+}
 
 interface UpdateCheckResult {
   updateAvailable: boolean;
@@ -316,6 +328,31 @@ function showMessageDialog(
   });
 }
 
+async function showAbout() {
+  try {
+    const info = await call<AboutInfo>("about_info");
+    await showMessageDialog(
+      info.name,
+      `Version ${info.version}\n\n${info.description}\n\n${info.copyright}`,
+      info.repoUrl,
+    );
+  } catch {
+    // call() already surfaces the error in the UI
+  }
+}
+
+/** macOS has these in the app menu; elsewhere they live in the footer. */
+async function setupFooterLinks() {
+  try {
+    const info = await invoke<AboutInfo>("about_info");
+    els.footerVersion.textContent = `v${info.version}`;
+  } catch {
+    els.footerVersion.textContent = "";
+  }
+  els.aboutLink.addEventListener("click", () => void showAbout());
+  els.updatesLink.addEventListener("click", () => void checkForUpdates());
+}
+
 async function checkForUpdates() {
   try {
     const result = await call<UpdateCheckResult>("check_for_updates");
@@ -451,6 +488,7 @@ async function refreshEnvDiskUsage(force = false) {
 function render() {
   if (!state) return;
   const { config, cursorRunning } = state;
+  els.footerLinks.classList.toggle("hidden", state.os === "macos");
   document.documentElement.dataset.os = state.os;
 
   els.status.textContent = cursorRunning ? "Cursor running" : "Cursor idle";
@@ -1044,6 +1082,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   els.launch.addEventListener("click", () => void doLaunch());
 
+  void setupFooterLinks();
   void refresh({ syncSelection: true }).catch(() => undefined);
 
   window.setInterval(() => {

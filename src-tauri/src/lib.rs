@@ -8,12 +8,14 @@ mod platform;
 mod updates;
 mod window_frame;
 
+#[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(target_os = "macos")]
 use tauri::{AppHandle, Emitter};
 
-#[cfg(not(target_os = "macos"))]
-use tauri::menu::AboutMetadata;
-
+/// macOS app menu. Linux and Windows get no menu bar (it would sit inside this
+/// small window); About and Check for Updates live in the window footer there.
+#[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let window_menu = Submenu::with_id_and_items(
         app,
@@ -23,13 +25,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &PredefinedMenuItem::minimize(app, None)?,
             &PredefinedMenuItem::maximize(app, None)?,
-            #[cfg(target_os = "macos")]
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, None)?,
         ],
     )?;
 
-    #[cfg(target_os = "macos")]
     let about_item = MenuItem::with_id(
         app,
         "about",
@@ -46,46 +46,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         None::<&str>,
     )?;
 
-    #[cfg(not(target_os = "macos"))]
-    let about_item = {
-        let version = app.package_info().version.to_string();
-        PredefinedMenuItem::about(
-            app,
-            None,
-            Some(AboutMetadata {
-                name: Some(about::APP_NAME.into()),
-                version: Some(version),
-                credits: Some(about::credits_text()),
-                website: Some(about::REPO_URL.into()),
-                website_label: Some(about::REPO_URL.into()),
-                authors: Some(vec!["Cláudio Silva".into()]),
-                comments: Some(
-                    "Switch between Cursor accounts and isolated environments.".into(),
-                ),
-                ..Default::default()
-            }),
-        )?
-    };
-
-    let help_menu = Submenu::with_id_and_items(
-        app,
-        "help",
-        "Help",
-        true,
-        &[
-            #[cfg(not(target_os = "macos"))]
-            &about_item,
-            #[cfg(not(target_os = "macos"))]
-            &PredefinedMenuItem::separator(app)?,
-            #[cfg(not(target_os = "macos"))]
-            &check_updates_item,
-        ],
-    )?;
+    let help_menu = Submenu::with_id_and_items(app, "help", "Help", true, &[])?;
 
     Menu::with_items(
         app,
         &[
-            #[cfg(target_os = "macos")]
             &Submenu::with_items(
                 app,
                 about::APP_NAME,
@@ -102,22 +67,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                     &PredefinedMenuItem::quit(app, None)?,
                 ],
             )?,
-            #[cfg(not(any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            )))]
             &Submenu::with_items(
                 app,
                 "File",
                 true,
-                &[
-                    &PredefinedMenuItem::close_window(app, None)?,
-                    #[cfg(not(target_os = "macos"))]
-                    &PredefinedMenuItem::quit(app, None)?,
-                ],
+                &[&PredefinedMenuItem::close_window(app, None)?],
             )?,
             &Submenu::with_items(
                 app,
@@ -133,7 +87,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                     &PredefinedMenuItem::select_all(app, None)?,
                 ],
             )?,
-            #[cfg(target_os = "macos")]
             &Submenu::with_items(
                 app,
                 "View",
@@ -161,20 +114,18 @@ pub fn run() {
             .build(),
     );
 
-    builder
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .menu(build_menu)
-        .on_menu_event(|app, event| {
-            match event.id().as_ref() {
-                "about" => {
-                    #[cfg(target_os = "macos")]
-                    about::show(&app.package_info().version.to_string());
-                }
-                "check-for-updates" => {
-                    let _ = app.emit("check-for-updates", ());
-                }
-                _ => {}
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "about" => about::show(&app.package_info().version.to_string()),
+            "check-for-updates" => {
+                let _ = app.emit("check-for-updates", ());
             }
-        })
+            _ => {}
+        });
+
+    builder
         .setup(|app| {
             window_frame::attach(app.handle());
             Ok(())
@@ -195,6 +146,7 @@ pub fn run() {
             commands::is_cursor_running,
             updates::check_for_updates,
             updates::open_url,
+            about::about_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

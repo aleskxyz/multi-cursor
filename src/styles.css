@@ -389,6 +389,33 @@ button.primary.danger {
   align-items: center;
 }
 
+/* Linux / Windows only: replaces the macOS app menu's About / Check for Updates. */
+.footer-links {
+  margin-right: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover,
+.link:focus-visible {
+  color: var(--text);
+}
+
 .hidden {
   display: none !important;
 }
