@@ -1018,6 +1018,10 @@ window.addEventListener("DOMContentLoaded", () => {
         render();
         return;
       }
+      // quitCursorWithUi leaves busy set; clear it so withBusy below runs
+      // (otherwise the account is never created and the status poller stalls).
+      busy = false;
+      busyLabel = null;
     } else {
       const ok = await askConfirm(
         "Add account?",
