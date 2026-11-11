@@ -92,6 +92,10 @@ const els = {
   modalCheckLabel: document.querySelector("#modal-check-label") as HTMLElement,
   modalCancel: document.querySelector("#modal-cancel") as HTMLButtonElement,
   modalConfirm: document.querySelector("#modal-confirm") as HTMLButtonElement,
+  ctxMenu: document.querySelector("#ctx-menu") as HTMLElement,
+  ctxLaunch: document.querySelector("#ctx-launch") as HTMLButtonElement,
+  ctxRename: document.querySelector("#ctx-rename") as HTMLButtonElement,
+  ctxDelete: document.querySelector("#ctx-delete") as HTMLButtonElement,
   footerLinks: document.querySelector("#footer-links") as HTMLElement,
   footerVersion: document.querySelector("#footer-version") as HTMLElement,
   aboutLink: document.querySelector("#about-link") as HTMLButtonElement,
@@ -363,6 +367,76 @@ async function setupFooterLinks() {
   els.updatesLink.addEventListener("click", () => void checkForUpdates());
 }
 
+/** Right-click menu for an account. Items mirror the panel buttons. */
+function openAccountMenu(account: Account, x: number, y: number) {
+  if (busy) return;
+  selectedAccountId = account.id;
+  userPickedAccount = true;
+  render(); // updates the buttons' enabled state for this account
+
+  els.ctxLaunch.textContent = els.launch.disabled
+    ? els.launch.textContent || "Launch"
+    : "Launch";
+  els.ctxLaunch.disabled = els.launch.disabled;
+  els.ctxRename.disabled = els.acctRename.disabled;
+  els.ctxDelete.disabled = els.acctDelete.disabled;
+
+  const menu = els.ctxMenu;
+  menu.classList.remove("hidden");
+  // Keep the menu inside the window.
+  const { width, height } = menu.getBoundingClientRect();
+  const left = Math.max(4, Math.min(x, window.innerWidth - width - 4));
+  const top = Math.max(4, Math.min(y, window.innerHeight - height - 4));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+}
+
+function closeAccountMenu() {
+  els.ctxMenu.classList.add("hidden");
+}
+
+function setupContextMenus() {
+  // No browser menu (Back / Refresh / Print…) in the app; keep it only in
+  // text fields, where it offers Cut / Copy / Paste.
+  document.addEventListener("contextmenu", (e) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("input, textarea, [contenteditable='true']")) return;
+    e.preventDefault();
+    closeAccountMenu();
+  });
+
+  const run = (button: HTMLButtonElement) => {
+    closeAccountMenu();
+    if (!button.disabled) button.click();
+  };
+  els.ctxLaunch.addEventListener("click", () => run(els.launch));
+  els.ctxRename.addEventListener("click", () => run(els.acctRename));
+  els.ctxDelete.addEventListener("click", () => run(els.acctDelete));
+
+  // Close on outside click, Escape, scroll, resize or losing focus.
+  document.addEventListener("mousedown", (e) => {
+    if (!els.ctxMenu.contains(e.target as Node)) closeAccountMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (els.ctxMenu.classList.contains("hidden")) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeAccountMenu();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = [...els.ctxMenu.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.key === "ArrowDown" ? i + 1 : i - 1;
+      items[(next + items.length) % items.length]!.focus();
+    }
+  });
+  window.addEventListener("blur", closeAccountMenu);
+  window.addEventListener("resize", closeAccountMenu);
+  els.accountList.addEventListener("scroll", closeAccountMenu);
+}
+
 async function checkForUpdates() {
   try {
     const result = await call<UpdateCheckResult>("check_for_updates");
@@ -586,6 +660,11 @@ function render() {
       selectedAccountId = account.id;
       userPickedAccount = true;
       render();
+    });
+    li.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openAccountMenu(account, e.clientX, e.clientY);
     });
     li.addEventListener("dblclick", () => {
       if (busy) return;
@@ -1120,6 +1199,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   els.launch.addEventListener("click", () => void doLaunch());
 
+  setupContextMenus();
   void setupFooterLinks();
   void refresh({ syncSelection: true }).catch(() => undefined);
 

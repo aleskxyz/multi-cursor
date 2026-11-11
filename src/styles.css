@@ -431,6 +431,45 @@ button.primary.danger {
   background: rgba(0, 0, 0, 0.55);
 }
 
+/* Right-click menu on accounts. */
+.ctx-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 160px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.ctx-menu button {
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.ctx-menu button:hover:not(:disabled),
+.ctx-menu button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: none;
+}
+
+.ctx-menu .danger-item:not(:disabled) {
+  color: var(--danger);
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
 .modal-card {
   width: min(340px, 100%);
   background: var(--panel);
