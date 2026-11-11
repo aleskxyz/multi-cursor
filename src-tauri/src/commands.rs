@@ -15,7 +15,7 @@ use crate::paths::{
     activate_environment_dirs, active_data_dir, active_dot_cursor_dir, application_support_dir,
     ensure_active_dirs, ensure_environment_pool, env_data_dir, env_dot_cursor_dir, env_state_db,
     home_dir, inactive_data_dir, inactive_dot_cursor_dir, load_config, migrate_legacy_storage,
-    move_to_trash, new_id, now_iso, prepare_inactive_environment, root_dir, save_config,
+    new_id, now_iso, prepare_inactive_environment, root_dir, save_config,
     Account, AppConfig, Environment, DATA_INACTIVE_PREFIX, DOT_INACTIVE_PREFIX,
 };
 
@@ -385,6 +385,9 @@ pub struct ListStateResult {
     pub state: AppState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captured_email: Option<String>,
+    /// Environments rebuilt from pool folders the config didn't know about.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recovered: Vec<String>,
 }
 
 #[tauri::command]
@@ -392,6 +395,9 @@ pub fn list_state() -> Result<ListStateResult, String> {
     let mut cfg = load_config()?;
     bootstrap_default_environment(&mut cfg)?;
     migrate_legacy_storage(&cfg)?;
+    // Before ensure_environment_pool, so a recovered environment that is
+    // missing one of its two folders gets an empty one created right away.
+    let recovered = recover_orphan_pool_dirs(&mut cfg)?;
     ensure_environment_pool(&cfg)?;
     // Reclaim disk from older Multi Cursor builds that full-copied state.vscdb.
     let _ = purge_vscdb_bak_files(
@@ -399,7 +405,6 @@ pub fn list_state() -> Result<ListStateResult, String> {
             .join("User")
             .join("globalStorage"),
     );
-    let _ = cleanup_orphan_pool_dirs(&cfg);
     adopt_live_login_if_needed(&mut cfg)?;
     let captured = try_capture_pending(&mut cfg)?;
     for account in &mut cfg.accounts {
@@ -409,47 +414,58 @@ pub fn list_state() -> Result<ListStateResult, String> {
     Ok(ListStateResult {
         state: state_from(cfg)?,
         captured_email: captured.into_iter().next(),
+        recovered,
     })
 }
 
-/// Trash pool folders that are not referenced by any configured environment.
-fn cleanup_orphan_pool_dirs(cfg: &AppConfig) -> Result<u64, String> {
-    let known: std::collections::HashSet<&str> =
-        cfg.environments.iter().map(|e| e.id.as_str()).collect();
-    let mut reclaimed = 0u64;
-
-    let support = application_support_dir()?;
-    if let Ok(entries) = std::fs::read_dir(&support) {
+/// Pool folders (`Cursor.multi-cursor.<id>`, `.cursor.multi-cursor.<id>`)
+/// whose id is not in the config hold real Cursor data whose config entry
+/// was lost (config deleted or reset). Bring them back as environments
+/// instead of trashing them; the user can delete them from the UI.
+/// Returns the names of recovered environments.
+fn recover_orphan_pool_dirs(cfg: &mut AppConfig) -> Result<Vec<String>, String> {
+    let known: std::collections::HashSet<String> =
+        cfg.environments.iter().map(|e| e.id.clone()).collect();
+    let mut orphan_ids: std::collections::BTreeSet<String> = Default::default();
+    for (dir, prefix) in [
+        (application_support_dir()?, DATA_INACTIVE_PREFIX),
+        (home_dir()?, DOT_INACTIVE_PREFIX),
+    ] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if let Some(id) = name.strip_prefix(DATA_INACTIVE_PREFIX) {
-                // Keep temporary swap parks and unknown ids out of known set → trash.
-                if !known.contains(id) {
-                    let size = dir_size_bytes(&entry.path());
-                    move_to_trash(&entry.path())?;
-                    reclaimed = reclaimed.saturating_add(size);
+            if let Some(id) = name.strip_prefix(prefix) {
+                if !id.is_empty() && !known.contains(id) && entry.path().is_dir() {
+                    orphan_ids.insert(id.to_string());
                 }
             }
         }
     }
 
-    let home = home_dir()?;
-    if let Ok(entries) = std::fs::read_dir(&home) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if let Some(id) = name.strip_prefix(DOT_INACTIVE_PREFIX) {
-                if !known.contains(id) {
-                    let size = dir_size_bytes(&entry.path());
-                    move_to_trash(&entry.path())?;
-                    reclaimed = reclaimed.saturating_add(size);
-                }
-            }
+    let mut recovered = Vec::new();
+    for id in orphan_ids {
+        let short: String = id.trim_start_matches(['_']).chars().take(8).collect();
+        let mut name = format!("Recovered environment ({short})");
+        let mut n = 2;
+        while cfg
+            .environments
+            .iter()
+            .any(|e| e.name.eq_ignore_ascii_case(&name))
+        {
+            name = format!("Recovered environment ({short}) {n}");
+            n += 1;
         }
+        cfg.environments.push(Environment {
+            id,
+            name: name.clone(),
+            created_at: now_iso(),
+        });
+        recovered.push(name);
     }
-
-    Ok(reclaimed)
+    Ok(recovered)
 }
 
 /// Disk usage (bytes) for an environment's data + ~/.cursor pool folders.
@@ -984,6 +1000,36 @@ mod tests {
         assert_eq!(cfg.active.account_id.as_deref(), Some(a.as_str()));
         let live = read_auth_keys(&state_db(&cfg, &env).unwrap()).unwrap();
         assert_eq!(email_from_snapshot(&live).as_deref(), Some("a@example.com"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lost_config_recovers_environments_instead_of_trashing_them() {
+        let (_g, root) = test_sandbox();
+        // An inactive environment with data, plus a half-present one.
+        prepare_inactive_environment("1234abcd-old").unwrap();
+        std::fs::write(inactive_data_dir("1234abcd-old").unwrap().join("marker"), "keep").unwrap();
+        std::fs::create_dir_all(inactive_dot_cursor_dir("5678ef90-half").unwrap()).unwrap();
+        // No config.json: first start after the config was lost.
+        assert!(!crate::paths::config_path().unwrap().exists());
+
+        let result = list_state().unwrap();
+        let names: Vec<&str> = result.state.config.environments.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Default"));
+        assert!(names.contains(&"Recovered environment (1234abcd)"));
+        assert!(names.contains(&"Recovered environment (5678ef90)"));
+        assert_eq!(result.recovered.len(), 2);
+        // Data is still there, and the half-present one got its missing folder.
+        let marker = inactive_data_dir("1234abcd-old").unwrap().join("marker");
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "keep");
+        assert!(inactive_data_dir("5678ef90-half").unwrap().exists());
+
+        // Next refresh: nothing new to recover, nothing trashed.
+        let again = list_state().unwrap();
+        assert!(again.recovered.is_empty());
+        assert_eq!(again.state.config.environments.len(), 3);
+        // Atomic save leaves no temp file behind.
+        assert!(!crate::paths::config_path().unwrap().with_extension("json.tmp").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 }

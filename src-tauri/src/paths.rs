@@ -176,7 +176,21 @@ pub fn save_config(cfg: &AppConfig) -> Result<(), String> {
     ensure_layout()?;
     let path = config_path()?;
     let raw = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    fs::write(path, raw).map_err(|e| e.to_string())
+    // Write a temp file and rename it over config.json, so a crash mid-write
+    // leaves the previous config intact instead of a truncated file.
+    // (rename replaces the target atomically on Unix and on Windows.)
+    let tmp = path.with_extension("json.tmp");
+    {
+        use std::io::Write;
+        let mut file = fs::File::create(&tmp).map_err(|e| format!("Save config: {e}"))?;
+        file.write_all(raw.as_bytes())
+            .and_then(|_| file.sync_all())
+            .map_err(|e| format!("Save config: {e}"))?;
+    }
+    fs::rename(&tmp, &path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("Save config: {e}")
+    })
 }
 
 pub fn now_iso() -> String {

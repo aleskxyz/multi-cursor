@@ -284,6 +284,8 @@ It provides the isolation people seek from `--user-data-dir`, while retaining th
 - Account snapshots contain only `cursorAuth/*` keys; Multi Cursor never copies the complete `state.vscdb` on every switch.
 - Environment copies skip caches and `state.vscdb.bak-*` files. Leftover live-profile backups are cleaned up on startup to reclaim disk space.
 - Deleting an inactive environment moves its pool folders to Trash (Recycle Bin on Windows). Multi Cursor never deletes the live `Cursor` or `~/.cursor` folders.
+- Environment folders are never removed automatically. If `~/.multi-cursor/config.json` is lost, existing environment folders are restored as "Recovered environment" entries on the next start.
+- The config is saved atomically, so a crash while saving can't leave it half-written.
 
 ## FAQ
 

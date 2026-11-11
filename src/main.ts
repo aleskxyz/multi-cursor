@@ -42,6 +42,8 @@ interface AppState {
 interface ListStateResult {
   state: AppState;
   capturedEmail?: string | null;
+  /** Environments rebuilt from data folders the config didn't know about. */
+  recovered?: string[];
 }
 
 type PromptResult = string | null;
@@ -758,7 +760,13 @@ async function refresh(opts?: { silent?: boolean; syncSelection?: boolean }) {
       accountsForEnv(selectedEnvId)[0]?.id ??
       null;
   }
-  if (result.capturedEmail && !opts?.silent) {
+  if (result.recovered?.length) {
+    const names = result.recovered.map((n) => `“${n}”`).join(", ");
+    showSuccess(
+      `Found Cursor data without a matching entry and restored it as ${names}. Rename or delete it if you don't need it.`,
+      { sticky: true },
+    );
+  } else if (result.capturedEmail && !opts?.silent) {
     showSuccess(`Signed in as ${result.capturedEmail}.`);
   }
   render();
