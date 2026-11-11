@@ -161,6 +161,16 @@ fn try_capture_pending(cfg: &mut AppConfig) -> Result<Vec<String>, String> {
     let mut captured_emails = Vec::new();
     for (env_id, account_id, was_pending) in candidates {
         if was_pending {
+            // The live DB belongs to whichever account is active. A pending
+            // account that is no longer active was abandoned (login window
+            // closed, another account launched); reading the live DB for it
+            // would copy someone else's login into it.
+            let is_active = cfg.active.env_id.as_deref() == Some(env_id.as_str())
+                && cfg.active.account_id.as_deref() == Some(account_id.as_str());
+            if !is_active {
+                discard_account(cfg, &account_id)?;
+                continue;
+            }
             let db = state_db(cfg, &env_id)?;
             let snap = match read_auth_keys(&db) {
                 Ok(s) => s,
@@ -173,13 +183,34 @@ fn try_capture_pending(cfg: &mut AppConfig) -> Result<Vec<String>, String> {
                 // Tokens can appear before cachedEmail — keep waiting.
                 continue;
             };
-            save_snapshot(&env_id, &account_id, &snap)?;
-            if let Some(account) = cfg.accounts.iter_mut().find(|a| a.id == account_id) {
+            // Signed in as an account this environment already has: refresh
+            // that account's snapshot instead of creating a duplicate.
+            let existing = cfg
+                .accounts
+                .iter()
+                .find(|a| {
+                    a.id != account_id
+                        && a.env_id == env_id
+                        && !a.pending_login
+                        && a.email
+                            .as_deref()
+                            .is_some_and(|e| e.eq_ignore_ascii_case(&email))
+                })
+                .map(|a| a.id.clone());
+            let target_id = match existing {
+                Some(existing_id) => {
+                    discard_account(cfg, &account_id)?;
+                    existing_id
+                }
+                None => account_id,
+            };
+            save_snapshot(&env_id, &target_id, &snap)?;
+            if let Some(account) = cfg.accounts.iter_mut().find(|a| a.id == target_id) {
                 apply_captured_identity(account, &email, &snap);
             }
             captured_emails.push(email);
             cfg.active.env_id = Some(env_id);
-            cfg.active.account_id = Some(account_id);
+            cfg.active.account_id = Some(target_id);
             continue;
         }
 
@@ -199,6 +230,37 @@ fn try_capture_pending(cfg: &mut AppConfig) -> Result<Vec<String>, String> {
         }
     }
     Ok(captured_emails)
+}
+
+/// Remove an account entry and its snapshot.
+fn discard_account(cfg: &mut AppConfig, account_id: &str) -> Result<(), String> {
+    if let Some(account) = cfg.accounts.iter().find(|a| a.id == account_id).cloned() {
+        delete_snapshot(&account.env_id, &account.id)?;
+        cfg.accounts.retain(|a| a.id != account_id);
+        if cfg.active.account_id.as_deref() == Some(account_id) {
+            cfg.active.account_id = None;
+        }
+    }
+    Ok(())
+}
+
+/// Drop pending ("Signing in…") accounts that never captured a login, except
+/// `keep`. Called whenever another account or environment becomes active, so
+/// an abandoned sign-in can't later pick up a different account's login.
+fn discard_abandoned_pending(cfg: &mut AppConfig, keep: Option<&str>) -> Result<(), String> {
+    // A sign-in may have completed since the UI last polled; capture it now,
+    // before the live DB gets overwritten by the next account.
+    try_capture_pending(cfg)?;
+    let abandoned: Vec<String> = cfg
+        .accounts
+        .iter()
+        .filter(|a| a.pending_login && Some(a.id.as_str()) != keep)
+        .map(|a| a.id.clone())
+        .collect();
+    for id in abandoned {
+        discard_account(cfg, &id)?;
+    }
+    Ok(())
 }
 
 fn save_active_account_tokens(cfg: &AppConfig, env_id: &str) -> Result<(), String> {
@@ -257,18 +319,41 @@ fn switch_environment(cfg: &mut AppConfig, env_id: &str) -> Result<(), String> {
 
 /// Switch auth in the environment DB. Caller must ensure Cursor is not running.
 fn apply_account(cfg: &mut AppConfig, env_id: &str, account_id: &str) -> Result<(), String> {
-    let account = cfg
+    if !cfg
         .accounts
         .iter()
-        .find(|a| a.id == account_id && a.env_id == env_id)
-        .ok_or_else(|| "Account not found".to_string())?
-        .clone();
+        .any(|a| a.id == account_id && a.env_id == env_id)
+    {
+        return Err("Account not found".to_string());
+    }
+
+    // This may capture a sign-in that finished since the last poll, possibly
+    // *for this very account*: it can stop being pending, or be merged into an
+    // existing account with the same email (and removed). Look it up again
+    // afterwards instead of trusting a copy taken before.
+    discard_abandoned_pending(cfg, Some(account_id))?;
+    let account_id = if cfg.accounts.iter().any(|a| a.id == account_id) {
+        account_id.to_string()
+    } else if cfg.active.env_id.as_deref() == Some(env_id) {
+        cfg.active
+            .account_id
+            .clone()
+            .ok_or_else(|| "Account not found".to_string())?
+    } else {
+        return Err("Account not found".to_string());
+    };
+    let account_id = account_id.as_str();
+    let pending = cfg
+        .accounts
+        .iter()
+        .find(|a| a.id == account_id)
+        .is_some_and(|a| a.pending_login);
 
     switch_environment(cfg, env_id)?;
     save_active_account_tokens(cfg, env_id)?;
 
     let db = state_db(cfg, env_id)?;
-    if account.pending_login {
+    if pending {
         clear_auth_keys(&db)?;
     } else {
         let snap = load_snapshot(env_id, account_id)?;
@@ -573,6 +658,7 @@ pub fn create_account(env_id: String) -> Result<AppState, String> {
         return Err("Environment not found".to_string());
     }
 
+    discard_abandoned_pending(&mut cfg, None)?;
     switch_environment(&mut cfg, &env_id)?;
     save_active_account_tokens(&cfg, &env_id)?;
 
@@ -675,6 +761,7 @@ pub fn launch(env_id: String, account_id: Option<String>) -> Result<AppState, St
                 "Cursor is still running. Wait for it to quit before launching.".to_string(),
             );
         }
+        discard_abandoned_pending(&mut cfg, None)?;
         switch_environment(&mut cfg, &env_id)?;
         cfg.active.account_id = None;
         save_config(&cfg)?;
@@ -698,4 +785,142 @@ pub fn force_quit_cursor_cmd() -> Result<(), String> {
 #[tauri::command]
 pub fn is_cursor_running() -> bool {
     cursor_running()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{read_auth_keys, write_auth_keys, AuthSnapshot};
+    use crate::paths::test_sandbox;
+
+    fn login(email: &str) -> AuthSnapshot {
+        let mut snap = AuthSnapshot::default();
+        snap.keys.insert("cursorAuth/accessToken".into(), format!("token-{email}"));
+        snap.keys.insert("cursorAuth/cachedEmail".into(), email.into());
+        snap
+    }
+
+    /// One environment with signed-in account A active.
+    fn setup() -> (AppConfig, String, String) {
+        let mut cfg = AppConfig::default();
+        bootstrap_default_environment(&mut cfg).unwrap();
+        let env = cfg.active.env_id.clone().unwrap();
+        let a = new_id();
+        save_snapshot(&env, &a, &login("a@example.com")).unwrap();
+        write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("a@example.com")).unwrap();
+        cfg.accounts.push(Account {
+            id: a.clone(),
+            env_id: env.clone(),
+            name: "a@example.com".into(),
+            email: Some("a@example.com".into()),
+            updated_at: now_iso(),
+            pending_login: false,
+        });
+        cfg.active.account_id = Some(a.clone());
+        (cfg, env, a)
+    }
+
+    /// create_account without launching Cursor.
+    fn start_new_account(cfg: &mut AppConfig, env: &str) -> String {
+        discard_abandoned_pending(cfg, None).unwrap();
+        save_active_account_tokens(cfg, env).unwrap();
+        let id = new_id();
+        clear_auth_keys(&state_db(cfg, env).unwrap()).unwrap();
+        save_snapshot(env, &id, &AuthSnapshot::default()).unwrap();
+        cfg.accounts.push(Account {
+            id: id.clone(),
+            env_id: env.into(),
+            name: "Signing in…".into(),
+            email: None,
+            updated_at: now_iso(),
+            pending_login: true,
+        });
+        cfg.active.account_id = Some(id.clone());
+        id
+    }
+
+    fn emails(cfg: &AppConfig) -> Vec<String> {
+        let mut v: Vec<String> = cfg
+            .accounts
+            .iter()
+            .map(|a| a.email.clone().unwrap_or_else(|| a.name.clone()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn abandoned_sign_in_does_not_duplicate_other_account() {
+        let (_g, root) = test_sandbox();
+        let (mut cfg, env, a) = setup();
+        let _pending = start_new_account(&mut cfg, &env);
+        // Login window closed without signing in; user launches account A.
+        apply_account(&mut cfg, &env, &a).unwrap();
+        // UI poll afterwards.
+        try_capture_pending(&mut cfg).unwrap();
+        assert_eq!(emails(&cfg), vec!["a@example.com"]);
+        assert_eq!(cfg.active.account_id.as_deref(), Some(a.as_str()));
+        let live = read_auth_keys(&state_db(&cfg, &env).unwrap()).unwrap();
+        assert_eq!(email_from_snapshot(&live).as_deref(), Some("a@example.com"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn signing_in_as_existing_account_updates_it() {
+        let (_g, root) = test_sandbox();
+        let (mut cfg, env, a) = setup();
+        start_new_account(&mut cfg, &env);
+        write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("A@example.com")).unwrap();
+        try_capture_pending(&mut cfg).unwrap();
+        assert_eq!(emails(&cfg), vec!["A@example.com"]);
+        assert_eq!(cfg.active.account_id.as_deref(), Some(a.as_str()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sign_in_before_poll_is_kept_when_switching() {
+        let (_g, root) = test_sandbox();
+        let (mut cfg, env, a) = setup();
+        start_new_account(&mut cfg, &env);
+        // Signed in as B, but launched A before the UI polled.
+        write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("b@example.com")).unwrap();
+        apply_account(&mut cfg, &env, &a).unwrap();
+        assert_eq!(emails(&cfg), vec!["a@example.com", "b@example.com"]);
+        let b = cfg.accounts.iter().find(|x| x.email.as_deref() == Some("b@example.com")).unwrap();
+        assert!(!b.pending_login);
+        let b_snap = crate::auth::load_snapshot(&env, &b.id).unwrap();
+        assert_eq!(email_from_snapshot(&b_snap).as_deref(), Some("b@example.com"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn launching_pending_account_right_after_sign_in_keeps_the_login() {
+        let (_g, root) = test_sandbox();
+        let (mut cfg, env, _a) = setup();
+        let pending = start_new_account(&mut cfg, &env);
+        // Signed in as B; user launches the pending account before any poll.
+        write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("b@example.com")).unwrap();
+        apply_account(&mut cfg, &env, &pending).unwrap();
+        let acct = cfg.accounts.iter().find(|x| x.id == pending).unwrap();
+        assert!(!acct.pending_login);
+        assert_eq!(cfg.active.account_id.as_deref(), Some(pending.as_str()));
+        let live = read_auth_keys(&state_db(&cfg, &env).unwrap()).unwrap();
+        assert_eq!(email_from_snapshot(&live).as_deref(), Some("b@example.com"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn launching_pending_account_that_merges_uses_the_existing_account() {
+        let (_g, root) = test_sandbox();
+        let (mut cfg, env, a) = setup();
+        let pending = start_new_account(&mut cfg, &env);
+        // Signed in again as A; launching the pending entry must end on A.
+        write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("a@example.com")).unwrap();
+        apply_account(&mut cfg, &env, &pending).unwrap();
+        assert_eq!(emails(&cfg), vec!["a@example.com"]);
+        assert_eq!(cfg.active.account_id.as_deref(), Some(a.as_str()));
+        let live = read_auth_keys(&state_db(&cfg, &env).unwrap()).unwrap();
+        assert_eq!(email_from_snapshot(&live).as_deref(), Some("a@example.com"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
