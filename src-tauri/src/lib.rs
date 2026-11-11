@@ -140,6 +140,7 @@ pub fn run() {
             commands::create_account,
             commands::delete_account,
             commands::switch_account,
+            commands::rename_account,
             commands::launch,
             commands::quit_cursor_cmd,
             commands::force_quit_cursor_cmd,

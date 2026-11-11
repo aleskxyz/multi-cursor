@@ -10,7 +10,10 @@ interface Environment {
 interface Account {
   id: string;
   envId: string;
+  /** Automatic name from the Cursor profile / email. */
   name: string;
+  /** Custom name set in Multi Cursor; shown instead of `name` when present. */
+  label?: string | null;
   email?: string | null;
   updatedAt: string;
   pendingLogin: boolean;
@@ -77,6 +80,7 @@ const els = {
   envRename: document.querySelector("#env-rename") as HTMLButtonElement,
   envDelete: document.querySelector("#env-delete") as HTMLButtonElement,
   acctNew: document.querySelector("#acct-new") as HTMLButtonElement,
+  acctRename: document.querySelector("#acct-rename") as HTMLButtonElement,
   acctDelete: document.querySelector("#acct-delete") as HTMLButtonElement,
   modal: document.querySelector("#modal") as HTMLElement,
   modalTitle: document.querySelector("#modal-title") as HTMLElement,
@@ -228,12 +232,18 @@ async function quitCursorWithUi(): Promise<void> {
   if (state) state.cursorRunning = false;
 }
 
-function askText(title: string, initial = "", confirmLabel = "OK"): Promise<PromptResult> {
+/** Resolves to the entered text ("" when left empty) or null on Cancel. */
+function askText(
+  title: string,
+  initial = "",
+  confirmLabel = "OK",
+  message?: string,
+): Promise<PromptResult> {
   return new Promise((resolve) => {
     modalResolver = resolve;
     els.modalTitle.textContent = title;
-    els.modalMessage.classList.add("hidden");
-    els.modalMessage.textContent = "";
+    els.modalMessage.textContent = message ?? "";
+    els.modalMessage.classList.toggle("hidden", !message);
     hideModalLink();
     els.modalInput.classList.remove("hidden");
     els.modalInput.value = initial;
@@ -390,12 +400,12 @@ function isActiveSelectionRunning(): boolean {
 }
 
 function accountDisplayName(account: Account): string {
-  return account.name || account.email || "Account";
+  return account.label?.trim() || account.name || account.email || "Account";
 }
 
 /** Label for confirm dialogs — includes email when it distinguishes the account. */
 function accountConfirmLabel(account: Account): string {
-  const name = account.name?.trim();
+  const name = accountDisplayName(account).trim();
   const email = account.email?.trim();
   if (name && email && name !== email) return `${name} (${email})`;
   return name || email || "Account";
@@ -602,6 +612,7 @@ function render() {
   els.envRename.disabled = busy || !hasEnv;
   els.envDelete.disabled = busy || !hasEnv || isCurrentEnv || onlyEnv;
   els.acctNew.disabled = busy || !hasEnv;
+  els.acctRename.disabled = busy || !hasAcct;
   els.acctDelete.disabled = busy || !hasAcct;
   els.launch.disabled = busy || !hasEnv || !hasAcct || alreadyRunning;
 
@@ -788,8 +799,8 @@ window.addEventListener("DOMContentLoaded", () => {
       closeModal("ok");
       return;
     }
-    const value = els.modalInput.value.trim();
-    closeModal(value || null);
+    // "" (confirmed but empty) is distinct from null (cancelled).
+    closeModal(els.modalInput.value.trim());
   });
   els.modalLink.addEventListener("click", (e) => {
     e.preventDefault();
@@ -1039,6 +1050,29 @@ window.addEventListener("DOMContentLoaded", () => {
       selectedAccountId = state.config.active.accountId ?? null;
       userPickedAccount = true;
       showSuccess("Cursor opened for sign-in. Waiting for email…");
+    });
+  });
+
+  els.acctRename.addEventListener("click", async () => {
+    if (!selectedAccountId || !state || busy) return;
+    const current = state.config.accounts.find((a) => a.id === selectedAccountId);
+    if (!current) return;
+    const automatic = current.pendingLogin
+      ? "the email you sign in with"
+      : current.name || current.email || "the name from Cursor";
+    const label = await askText(
+      "Rename account",
+      current.label ?? "",
+      "Save",
+      `Shown in Multi Cursor only. Leave empty to use ${automatic}.`,
+    );
+    if (label === null) return;
+    await withBusy("Saving…", async () => {
+      state = await call<AppState>("rename_account", { id: current.id, label });
+      const updated = state.config.accounts.find((a) => a.id === current.id);
+      showSuccess(
+        label ? `Renamed to “${label}”.` : `Name reset to “${updated ? accountDisplayName(updated) : automatic}”.`,
+      );
     });
   });
 

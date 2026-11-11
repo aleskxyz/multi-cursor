@@ -110,6 +110,7 @@ fn capture_default_account(cfg: &mut AppConfig, env_id: &str) -> Result<(), Stri
         email,
         updated_at: now_iso(),
         pending_login: false,
+        label: None,
     });
     cfg.active.account_id = Some(account_id);
     Ok(())
@@ -199,6 +200,18 @@ fn try_capture_pending(cfg: &mut AppConfig) -> Result<Vec<String>, String> {
                 .map(|a| a.id.clone());
             let target_id = match existing {
                 Some(existing_id) => {
+                    // Keep a custom name given to the sign-in if the existing
+                    // account has none.
+                    let pending_label = cfg
+                        .accounts
+                        .iter()
+                        .find(|a| a.id == account_id)
+                        .and_then(|a| a.label.clone());
+                    if let Some(existing) = cfg.accounts.iter_mut().find(|a| a.id == existing_id) {
+                        if existing.label.is_none() {
+                            existing.label = pending_label;
+                        }
+                    }
                     discard_account(cfg, &account_id)?;
                     existing_id
                 }
@@ -595,6 +608,22 @@ pub fn rename_environment(id: String, name: String) -> Result<AppState, String> 
     state_from(cfg)
 }
 
+/// Set or clear (empty `label`) an account's custom name. Only Multi Cursor's
+/// config changes, so Cursor may keep running.
+#[tauri::command]
+pub fn rename_account(id: String, label: String) -> Result<AppState, String> {
+    let label = label.trim();
+    let mut cfg = load_config()?;
+    let account = cfg
+        .accounts
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "Account not found".to_string())?;
+    account.label = (!label.is_empty()).then(|| label.to_string());
+    save_config(&cfg)?;
+    state_from(cfg)
+}
+
 #[tauri::command]
 pub async fn delete_environment(app: AppHandle, id: String) -> Result<AppState, String> {
     let mut cfg = load_config()?;
@@ -673,6 +702,7 @@ pub fn create_account(env_id: String) -> Result<AppState, String> {
         email: None,
         updated_at: now_iso(),
         pending_login: true,
+        label: None,
     });
     cfg.active.env_id = Some(env_id);
     cfg.active.account_id = Some(id);
@@ -815,6 +845,7 @@ mod tests {
             email: Some("a@example.com".into()),
             updated_at: now_iso(),
             pending_login: false,
+            label: None,
         });
         cfg.active.account_id = Some(a.clone());
         (cfg, env, a)
@@ -834,6 +865,7 @@ mod tests {
             email: None,
             updated_at: now_iso(),
             pending_login: true,
+            label: None,
         });
         cfg.active.account_id = Some(id.clone());
         id
@@ -890,6 +922,37 @@ mod tests {
         assert!(!b.pending_login);
         let b_snap = crate::auth::load_snapshot(&env, &b.id).unwrap();
         assert_eq!(email_from_snapshot(&b_snap).as_deref(), Some("b@example.com"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn custom_name_survives_refresh_and_merge() {
+        let (_g, root) = test_sandbox();
+        let (mut cfg, env, a) = setup();
+        save_config(&cfg).unwrap();
+
+        // Rename A; the automatic refresh must not overwrite the custom name.
+        let state = rename_account(a.clone(), "  Work  ".into()).unwrap();
+        let acct = state.config.accounts.iter().find(|x| x.id == a).unwrap();
+        assert_eq!(acct.label.as_deref(), Some("Work"));
+        let mut acct = acct.clone();
+        refresh_account_identity_from_snapshot(&mut acct);
+        assert_eq!(acct.label.as_deref(), Some("Work"));
+        assert_eq!(acct.name, "a@example.com");
+
+        // Empty clears it.
+        let state = rename_account(a.clone(), " ".into()).unwrap();
+        assert!(state.config.accounts.iter().find(|x| x.id == a).unwrap().label.is_none());
+
+        // A name given while signing in carries over when the sign-in turns
+        // out to be an existing account.
+        cfg = load_config().unwrap();
+        let pending = start_new_account(&mut cfg, &env);
+        cfg.accounts.iter_mut().find(|x| x.id == pending).unwrap().label = Some("Main".into());
+        write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("a@example.com")).unwrap();
+        try_capture_pending(&mut cfg).unwrap();
+        assert_eq!(cfg.accounts.len(), 1);
+        assert_eq!(cfg.accounts[0].label.as_deref(), Some("Main"));
         let _ = std::fs::remove_dir_all(root);
     }
 

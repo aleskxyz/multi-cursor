@@ -32,7 +32,11 @@ pub struct Environment {
 pub struct Account {
     pub id: String,
     pub env_id: String,
+    /// Automatic name from the Cursor profile / email; refreshed on each load.
     pub name: String,
+    /// Custom name set by the user; shown instead of `name` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     pub updated_at: String,

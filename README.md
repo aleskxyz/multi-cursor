@@ -201,7 +201,7 @@ When switching, Multi Cursor closes Cursor if necessary, activates the selected 
 - **Rename environment** changes only its display name, never its folder identifier.
 - **Delete environment** is available only for inactive environments. Its stored folders and account snapshots move to Trash.
 - **Delete account** removes Multi Cursor's saved login snapshot. Cursor only needs to quit when deleting the current account.
-- Account names are captured email addresses, so they cannot be renamed. A temporary label is used while sign-in is pending.
+- Accounts are named automatically from the Cursor profile or email once sign-in completes. **Rename** gives an account a custom name shown in Multi Cursor only (it also works while sign-in is pending); clear the name to go back to the automatic one.
 
 ### Tips
 
