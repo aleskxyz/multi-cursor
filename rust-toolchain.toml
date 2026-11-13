@@ -1,0 +1,7 @@
+# The Rust version CI and local builds use, so a new Rust release can't
+# break a build or add clippy lints by surprise. Bump it on purpose, and fix
+# any new lints in the same change.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

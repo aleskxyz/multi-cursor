@@ -1,0 +1,72 @@
+name: CI
+
+# Lint and test on macOS, Linux and Windows. Runs for every pull request and
+# push to main; the Release workflow also runs it before a release.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Pushes to main and
+# release runs get a unique group, so they always finish.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}', github.run_id) }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        with:
+          native: "false"
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: rustfmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # x64 is enough here: arm64 runs the same code, and build.yml builds it.
+        os: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: test-${{ matrix.os }}
+
+      # The Rust crate embeds the built frontend, so it must exist first.
+      - name: Build frontend
+        run: npm run build
+
+      # Much of the code only compiles on one platform, so lint on each.
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # Tests are sandboxed and never touch real Cursor data.
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --lib --locked

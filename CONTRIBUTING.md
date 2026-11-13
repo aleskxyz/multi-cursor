@@ -41,6 +41,20 @@ On Linux and Windows, also check that:
 
 `cargo test` in `src-tauri/` runs a switch test against a temporary home folder; it never touches your real Cursor data.
 
+## Continuous integration
+
+Every pull request and push to `main` runs [CI](.github/workflows/ci.yml): TypeScript and `cargo fmt` checks, then `cargo clippy` and `cargo test` on macOS, Linux and Windows. Run the same checks locally before opening a pull request:
+
+```bash
+npm run build                 # TypeScript check + frontend build (the Rust crate embeds it)
+cd src-tauri
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --lib --locked
+```
+
+The Rust version is pinned in [`rust-toolchain.toml`](rust-toolchain.toml) and the Node version in [`.nvmrc`](.nvmrc); `rustup` picks up the Rust version automatically.
+
 ## App icon
 
 The branded icon source is [`assets/logo.png`](assets/logo.png). The main window uses a copy at `public/assets/logo.png`.

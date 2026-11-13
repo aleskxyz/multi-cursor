@@ -1,0 +1,61 @@
+name: Set up toolchains
+description: >
+  Node (version from .nvmrc) with npm dependencies, Rust (version from
+  rust-toolchain.toml) and, for jobs that compile the app, the Linux system
+  libraries and the Rust build cache.
+
+inputs:
+  native:
+    description: Install the Linux system libraries and the Rust build cache ("false" for lint-only jobs).
+    default: "true"
+  rust-targets:
+    description: Extra Rust targets, comma-separated (e.g. for a universal macOS build).
+    default: ""
+  cache-key:
+    description: Rust cache key; give each matrix entry its own.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux' && inputs.native == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+          libxdo-dev libssl-dev build-essential file
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+
+    - name: Install Rust
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.rust-targets }}
+      run: |
+        # GitHub's runners have rustup; minimal images (self-hosted, act) may not.
+        if ! command -v rustup >/dev/null; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        rustup toolchain install # the version in rust-toolchain.toml
+        if [ -n "$TARGETS" ]; then rustup target add ${TARGETS//,/ }; fi
+        rustc --version
+
+    # Only main saves the cache, so pull requests can't fill it up.
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: inputs.native == 'true'
+      with:
+        workspaces: src-tauri
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Install npm dependencies
+      shell: bash
+      run: npm ci

@@ -1,0 +1,10 @@
+# Keep the pinned GitHub Actions current: one grouped pull request a month.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/setup"]
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
