@@ -113,9 +113,7 @@ fn is_excluded_dir_name(name: &str) -> bool {
 }
 
 fn is_excluded_file_name(name: &str) -> bool {
-    name == "state.vscdb.backup"
-        || name.starts_with("state.vscdb.bak-")
-        || name.contains(".bak-")
+    name == "state.vscdb.backup" || name.starts_with("state.vscdb.bak-") || name.contains(".bak-")
 }
 
 /// Skip heavy/cache paths and Cursor DB bak side-files.
@@ -186,8 +184,7 @@ fn copy_tree_native(src: &Path, dst: &Path, files_done: &AtomicU64) -> Result<()
 
     while let Some((src_dir, dst_dir)) = stack.pop() {
         std::fs::create_dir_all(&dst_dir).map_err(|e| friendly_copy_error(&e, &dst_dir))?;
-        let entries =
-            std::fs::read_dir(&src_dir).map_err(|e| friendly_copy_error(&e, &src_dir))?;
+        let entries = std::fs::read_dir(&src_dir).map_err(|e| friendly_copy_error(&e, &src_dir))?;
         for entry in entries {
             let entry = entry.map_err(|e| friendly_copy_error(&e, &src_dir))?;
             let src_path = entry.path();
@@ -357,11 +354,7 @@ fn count_all_files(app: Option<&AppHandle>, path: &Path, running_total: &mut u64
                 if let Some(app) = app {
                     if last_emit.elapsed() >= Duration::from_secs(1) {
                         last_emit = std::time::Instant::now();
-                        emit_progress(
-                            app,
-                            0,
-                            format!("Counting files… ({running_total})"),
-                        );
+                        emit_progress(app, 0, format!("Counting files… ({running_total})"));
                     }
                 }
             }
@@ -375,11 +368,7 @@ fn emit_delete_progress(app: &AppHandle, done: u64, total: u64, label: &str) {
         .saturating_mul(100)
         .checked_div(total)
         .map_or(100, |p| p.min(99) as u8);
-    emit_progress(
-        app,
-        percent,
-        format!("{label} ({done} / {total} files)"),
-    );
+    emit_progress(app, percent, format!("{label} ({done} / {total} files)"));
 }
 
 /// Move inactive environment folders to Trash, with file-count–weighted progress.
@@ -412,9 +401,9 @@ pub fn trash_paths_with_progress(
         }
         let weight = counts[i].max(1);
         let slice_start = ((done_before.saturating_mul(100)) / progress_total) as u8;
-        let slice_end =
-            (((done_before.saturating_add(weight)).saturating_mul(100)) / progress_total).min(99)
-                as u8;
+        let slice_end = (((done_before.saturating_add(weight)).saturating_mul(100))
+            / progress_total)
+            .min(99) as u8;
 
         emit_delete_progress(app, done_before, progress_total, label);
 

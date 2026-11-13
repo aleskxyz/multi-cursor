@@ -62,10 +62,8 @@ pub fn show(version: &str) {
 
     let credits_body = credits_text();
     let credits_ns = NSString::from_str(&credits_body);
-    let credits = NSMutableAttributedString::initWithString(
-        NSMutableAttributedString::alloc(),
-        &credits_ns,
-    );
+    let credits =
+        NSMutableAttributedString::initWithString(NSMutableAttributedString::alloc(), &credits_ns);
 
     let url_ns = NSString::from_str(REPO_URL);
     if let Some(url) = NSURL::URLWithString(&url_ns) {

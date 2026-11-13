@@ -426,10 +426,7 @@ fn is_in_use_error(e: &std::io::Error) -> bool {
 /// `from_env_id` is the currently active environment id (its data is under the
 /// live names). After success, `to_env_id` owns the live names and `from_env_id`
 /// sits in the inactive pool.
-pub fn activate_environment_dirs(
-    from_env_id: Option<&str>,
-    to_env_id: &str,
-) -> Result<(), String> {
+pub fn activate_environment_dirs(from_env_id: Option<&str>, to_env_id: &str) -> Result<(), String> {
     if from_env_id == Some(to_env_id) {
         return Ok(());
     }
@@ -576,7 +573,9 @@ pub(crate) struct SandboxGuard {
 #[cfg(test)]
 impl Drop for SandboxGuard {
     fn drop(&mut self) {
-        *crate::platform::TEST_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *crate::platform::TEST_ROOT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -587,7 +586,9 @@ pub(crate) fn test_sandbox() -> (SandboxGuard, PathBuf) {
     let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("multi-cursor-test-{}", new_id()));
     fs::create_dir_all(&dir).unwrap();
-    *crate::platform::TEST_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir.clone());
+    *crate::platform::TEST_ROOT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(dir.clone());
     // Fail loudly rather than ever running against real data.
     assert!(home_dir().unwrap().starts_with(&dir));
     assert!(active_data_dir().unwrap().starts_with(&dir));

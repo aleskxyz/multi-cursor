@@ -61,7 +61,10 @@ pub struct CursorLaunch {
 
 impl CursorLaunch {
     pub fn program(program: impl Into<String>) -> Self {
-        Self { program: program.into(), args: Vec::new() }
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+        }
     }
 }
 
@@ -155,7 +158,11 @@ fn cursor_from_desktop_entries() -> Option<CursorLaunch> {
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
-    dirs.extend(system.split(':').map(|d| PathBuf::from(d).join("applications")));
+    dirs.extend(
+        system
+            .split(':')
+            .map(|d| PathBuf::from(d).join("applications")),
+    );
 
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -288,7 +295,10 @@ fn parse_desktop_exec(exec: &str) -> Option<CursorLaunch> {
             }
         }
     }
-    Some(CursorLaunch { program, args: it.collect() })
+    Some(CursorLaunch {
+        program,
+        args: it.collect(),
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -384,7 +394,10 @@ mod tests {
     fn official_deb_desktop_entry() {
         // From cursor_3.29.15_amd64.deb (trimmed).
         let text = "[Desktop Entry]\nName=Cursor\nExec=/usr/share/cursor/cursor %F\nStartupWMClass=Cursor\n\n[Desktop Action new-empty-window]\nName=New Empty Window\nExec=/usr/share/cursor/cursor --new-window %F\n";
-        assert_eq!(parse_cursor_desktop_entry(text), launch("/usr/share/cursor/cursor", &[]));
+        assert_eq!(
+            parse_cursor_desktop_entry(text),
+            launch("/usr/share/cursor/cursor", &[])
+        );
     }
 
     #[test]
@@ -401,7 +414,10 @@ mod tests {
         let quoted = "[Desktop Entry]\nName=Cursor\nExec=\"/home/me/My Apps/Cursor-3.29.15-x86_64.AppImage\" --no-sandbox %U\n";
         assert_eq!(
             parse_cursor_desktop_entry(quoted),
-            launch("/home/me/My Apps/Cursor-3.29.15-x86_64.AppImage", &["--no-sandbox"])
+            launch(
+                "/home/me/My Apps/Cursor-3.29.15-x86_64.AppImage",
+                &["--no-sandbox"]
+            )
         );
         let env = "[Desktop Entry]\nName=Cursor\nExec=env -u FOO APPIMAGELAUNCHER_DISABLE=1 \"/home/me/Apps/cursor.AppImage\" --no-sandbox %U\n";
         assert_eq!(

@@ -15,8 +15,8 @@ use crate::paths::{
     activate_environment_dirs, active_data_dir, active_dot_cursor_dir, application_support_dir,
     ensure_active_dirs, ensure_environment_pool, env_data_dir, env_dot_cursor_dir, env_state_db,
     home_dir, inactive_data_dir, inactive_dot_cursor_dir, load_config, migrate_legacy_storage,
-    new_id, now_iso, prepare_inactive_environment, root_dir, save_config,
-    Account, AppConfig, Environment, DATA_INACTIVE_PREFIX, DOT_INACTIVE_PREFIX,
+    new_id, now_iso, prepare_inactive_environment, root_dir, save_config, Account, AppConfig,
+    Environment, DATA_INACTIVE_PREFIX, DOT_INACTIVE_PREFIX,
 };
 
 #[derive(Debug, Serialize)]
@@ -101,8 +101,7 @@ fn capture_default_account(cfg: &mut AppConfig, env_id: &str) -> Result<(), Stri
     let account_id = new_id();
     save_snapshot(env_id, &account_id, &snap)?;
     let email = email_from_snapshot(&snap);
-    let name = display_name_from_snapshot(&snap)
-        .unwrap_or_else(|| "Signed-in account".to_string());
+    let name = display_name_from_snapshot(&snap).unwrap_or_else(|| "Signed-in account".to_string());
     cfg.accounts.push(Account {
         id: account_id.clone(),
         env_id: env_id.to_string(),
@@ -129,8 +128,7 @@ fn account_needs_identity(account: &Account) -> bool {
 fn apply_captured_identity(account: &mut Account, email: &str, snap: &AuthSnapshot) {
     account.pending_login = false;
     account.email = Some(email.to_string());
-    account.name = profile_name_from_snapshot(snap)
-        .unwrap_or_else(|| email.to_string());
+    account.name = profile_name_from_snapshot(snap).unwrap_or_else(|| email.to_string());
     account.updated_at = now_iso();
 }
 
@@ -400,11 +398,7 @@ pub fn list_state() -> Result<ListStateResult, String> {
     let recovered = recover_orphan_pool_dirs(&mut cfg)?;
     ensure_environment_pool(&cfg)?;
     // Reclaim disk from older Multi Cursor builds that full-copied state.vscdb.
-    let _ = purge_vscdb_bak_files(
-        &active_data_dir()?
-            .join("User")
-            .join("globalStorage"),
-    );
+    let _ = purge_vscdb_bak_files(&active_data_dir()?.join("User").join("globalStorage"));
     adopt_live_login_if_needed(&mut cfg)?;
     let captured = try_capture_pending(&mut cfg)?;
     for account in &mut cfg.accounts {
@@ -835,8 +829,10 @@ mod tests {
 
     fn login(email: &str) -> AuthSnapshot {
         let mut snap = AuthSnapshot::default();
-        snap.keys.insert("cursorAuth/accessToken".into(), format!("token-{email}"));
-        snap.keys.insert("cursorAuth/cachedEmail".into(), email.into());
+        snap.keys
+            .insert("cursorAuth/accessToken".into(), format!("token-{email}"));
+        snap.keys
+            .insert("cursorAuth/cachedEmail".into(), email.into());
         snap
     }
 
@@ -928,10 +924,17 @@ mod tests {
         write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("b@example.com")).unwrap();
         apply_account(&mut cfg, &env, &a).unwrap();
         assert_eq!(emails(&cfg), vec!["a@example.com", "b@example.com"]);
-        let b = cfg.accounts.iter().find(|x| x.email.as_deref() == Some("b@example.com")).unwrap();
+        let b = cfg
+            .accounts
+            .iter()
+            .find(|x| x.email.as_deref() == Some("b@example.com"))
+            .unwrap();
         assert!(!b.pending_login);
         let b_snap = crate::auth::load_snapshot(&env, &b.id).unwrap();
-        assert_eq!(email_from_snapshot(&b_snap).as_deref(), Some("b@example.com"));
+        assert_eq!(
+            email_from_snapshot(&b_snap).as_deref(),
+            Some("b@example.com")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -952,13 +955,24 @@ mod tests {
 
         // Empty clears it.
         let state = rename_account(a.clone(), " ".into()).unwrap();
-        assert!(state.config.accounts.iter().find(|x| x.id == a).unwrap().label.is_none());
+        assert!(state
+            .config
+            .accounts
+            .iter()
+            .find(|x| x.id == a)
+            .unwrap()
+            .label
+            .is_none());
 
         // A name given while signing in carries over when the sign-in turns
         // out to be an existing account.
         cfg = load_config().unwrap();
         let pending = start_new_account(&mut cfg, &env);
-        cfg.accounts.iter_mut().find(|x| x.id == pending).unwrap().label = Some("Main".into());
+        cfg.accounts
+            .iter_mut()
+            .find(|x| x.id == pending)
+            .unwrap()
+            .label = Some("Main".into());
         write_auth_keys(&state_db(&cfg, &env).unwrap(), &login("a@example.com")).unwrap();
         try_capture_pending(&mut cfg).unwrap();
         assert_eq!(cfg.accounts.len(), 1);
@@ -1002,13 +1016,23 @@ mod tests {
         let (_g, root) = test_sandbox();
         // An inactive environment with data, plus a half-present one.
         prepare_inactive_environment("1234abcd-old").unwrap();
-        std::fs::write(inactive_data_dir("1234abcd-old").unwrap().join("marker"), "keep").unwrap();
+        std::fs::write(
+            inactive_data_dir("1234abcd-old").unwrap().join("marker"),
+            "keep",
+        )
+        .unwrap();
         std::fs::create_dir_all(inactive_dot_cursor_dir("5678ef90-half").unwrap()).unwrap();
         // No config.json: first start after the config was lost.
         assert!(!crate::paths::config_path().unwrap().exists());
 
         let result = list_state().unwrap();
-        let names: Vec<&str> = result.state.config.environments.iter().map(|e| e.name.as_str()).collect();
+        let names: Vec<&str> = result
+            .state
+            .config
+            .environments
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
         assert!(names.contains(&"Default"));
         assert!(names.contains(&"Recovered environment (1234abcd)"));
         assert!(names.contains(&"Recovered environment (5678ef90)"));
@@ -1023,7 +1047,10 @@ mod tests {
         assert!(again.recovered.is_empty());
         assert_eq!(again.state.config.environments.len(), 3);
         // Atomic save leaves no temp file behind.
-        assert!(!crate::paths::config_path().unwrap().with_extension("json.tmp").exists());
+        assert!(!crate::paths::config_path()
+            .unwrap()
+            .with_extension("json.tmp")
+            .exists());
         let _ = std::fs::remove_dir_all(root);
     }
 }

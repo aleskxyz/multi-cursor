@@ -162,21 +162,36 @@ fn fill<T>(slot: &mut Option<T>, value: Option<T>) {
 /// `DashboardService/GetPlanInfo`: display name and the included-usage reset.
 fn apply_plan_info(u: &mut AccountUsage, v: &Value) {
     fill(&mut u.plan_name, text(v, &["planInfo", "planName"]));
-    fill(&mut u.resets_at, millis_to_iso(v, &["planInfo", "includedUsageResetsAt"]));
+    fill(
+        &mut u.resets_at,
+        millis_to_iso(v, &["planInfo", "includedUsageResetsAt"]),
+    );
 }
 
 /// `DashboardService/GetCurrentPeriodUsage`: percent used and period end.
 fn apply_current_period(u: &mut AccountUsage, v: &Value) {
-    fill(&mut u.used_percent, num(v, &["planUsage", "totalPercentUsed"]));
-    fill(&mut u.included_used_cents, num(v, &["planUsage", "includedSpend"]));
+    fill(
+        &mut u.used_percent,
+        num(v, &["planUsage", "totalPercentUsed"]),
+    );
+    fill(
+        &mut u.included_used_cents,
+        num(v, &["planUsage", "includedSpend"]),
+    );
     fill(&mut u.included_limit_cents, num(v, &["planUsage", "limit"]));
-    fill(&mut u.bonus_cents, num(v, &["planUsage", "bonusSpend"]).filter(|b| *b > 0.0));
+    fill(
+        &mut u.bonus_cents,
+        num(v, &["planUsage", "bonusSpend"]).filter(|b| *b > 0.0),
+    );
     fill(&mut u.resets_at, millis_to_iso(v, &["billingCycleEnd"]));
 }
 
 /// `cursor.com/api/usage-summary`: dollar amounts and on-demand spend.
 fn apply_usage_summary(u: &mut AccountUsage, v: &Value) {
-    fill(&mut u.plan_name, text(v, &["membershipType"]).and_then(|p| pretty_plan(&p)));
+    fill(
+        &mut u.plan_name,
+        text(v, &["membershipType"]).and_then(|p| pretty_plan(&p)),
+    );
 
     if let Some(plan) = v.pointer("/individualUsage/plan") {
         fill(
@@ -184,7 +199,10 @@ fn apply_usage_summary(u: &mut AccountUsage, v: &Value) {
             num(plan, &["breakdown", "included"]).or(num(plan, &["used"])),
         );
         fill(&mut u.included_limit_cents, num(plan, &["limit"]));
-        fill(&mut u.bonus_cents, num(plan, &["breakdown", "bonus"]).filter(|b| *b > 0.0));
+        fill(
+            &mut u.bonus_cents,
+            num(plan, &["breakdown", "bonus"]).filter(|b| *b > 0.0),
+        );
         fill(&mut u.used_percent, num(plan, &["totalPercentUsed"]));
     }
 
@@ -195,7 +213,10 @@ fn apply_usage_summary(u: &mut AccountUsage, v: &Value) {
         .or_else(|| v.pointer("/teamUsage/onDemand"))
         .or(individual);
     if let Some(od) = on_demand {
-        fill(&mut u.on_demand_enabled, od.get("enabled").and_then(Value::as_bool));
+        fill(
+            &mut u.on_demand_enabled,
+            od.get("enabled").and_then(Value::as_bool),
+        );
         fill(&mut u.on_demand_used_cents, num(od, &["used"]));
         fill(&mut u.on_demand_limit_cents, num(od, &["limit"]));
     }
@@ -215,20 +236,38 @@ fn apply_prepaid_billing(u: &mut AccountUsage, v: &Value) {
         return;
     }
     fill(&mut u.credit_available_cents, Some(available));
-    fill(&mut u.credit_spent_month_cents, Some(num(v, &["spentThisMonthCents"]).unwrap_or(0.0)));
-    let auto = v.pointer("/autoTopUp/enabled").and_then(Value::as_bool).unwrap_or(false);
+    fill(
+        &mut u.credit_spent_month_cents,
+        Some(num(v, &["spentThisMonthCents"]).unwrap_or(0.0)),
+    );
+    let auto = v
+        .pointer("/autoTopUp/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     fill(&mut u.credit_auto_top_up, Some(auto));
     if auto {
-        fill(&mut u.credit_top_up_amount_cents, num(v, &["autoTopUp", "topUpAmountCents"]));
-        fill(&mut u.credit_top_up_threshold_cents, num(v, &["autoTopUp", "thresholdCents"]));
+        fill(
+            &mut u.credit_top_up_amount_cents,
+            num(v, &["autoTopUp", "topUpAmountCents"]),
+        );
+        fill(
+            &mut u.credit_top_up_threshold_cents,
+            num(v, &["autoTopUp", "thresholdCents"]),
+        );
     }
-    fill(&mut u.credit_uncovered_cents, num(v, &["uncoveredSpendCents"]).filter(|c| *c > 0.0));
+    fill(
+        &mut u.credit_uncovered_cents,
+        num(v, &["uncoveredSpendCents"]).filter(|c| *c > 0.0),
+    );
 }
 
 /// `auth/full_stripe_profile`: subscription status (and plan, as a fallback).
 fn apply_stripe_profile(u: &mut AccountUsage, v: &Value) {
     fill(&mut u.subscription_status, text(v, &["subscriptionStatus"]));
-    fill(&mut u.plan_name, text(v, &["membershipType"]).and_then(|p| pretty_plan(&p)));
+    fill(
+        &mut u.plan_name,
+        text(v, &["membershipType"]).and_then(|p| pretty_plan(&p)),
+    );
 }
 
 fn snapshot_key(snap: &AuthSnapshot, k: &str) -> Option<String> {
@@ -280,7 +319,11 @@ fn account_snapshot(account_id: &str) -> Result<(AuthSnapshot, PathBuf), String>
     Ok((load_snapshot(&account.env_id, account_id)?, data_dir))
 }
 
-async fn fetch_usage(snap: &AuthSnapshot, data_dir: &std::path::Path, retry_key: bool) -> AccountUsage {
+async fn fetch_usage(
+    snap: &AuthSnapshot,
+    data_dir: &std::path::Path,
+    retry_key: bool,
+) -> AccountUsage {
     let mut u = AccountUsage {
         status: "unavailable".to_string(),
         fetched_at: crate::paths::now_iso(),
@@ -367,12 +410,19 @@ async fn fetch_usage(snap: &AuthSnapshot, data_dir: &std::path::Path, retry_key:
         spawn(
             client
                 .get(USAGE_SUMMARY_URL)
-                .header("Cookie", format!("WorkosCursorSessionToken={user_id}%3A%3A{token}"))
+                .header(
+                    "Cookie",
+                    format!("WorkosCursorSessionToken={user_id}%3A%3A{token}"),
+                )
                 .header("Accept", "application/json")
                 .header("Referer", "https://cursor.com/dashboard"),
         )
     });
-    let stripe = spawn(client.get(format!("{API}/auth/full_stripe_profile")).bearer_auth(&token));
+    let stripe = spawn(
+        client
+            .get(format!("{API}/auth/full_stripe_profile"))
+            .bearer_auth(&token),
+    );
 
     // Applied in a fixed order: earlier sources win when several report a field.
     type Apply = fn(&mut AccountUsage, &Value);
@@ -400,7 +450,10 @@ async fn fetch_usage(snap: &AuthSnapshot, data_dir: &std::path::Path, retry_key:
 
 /// Plan and usage for one account. Cached for a few minutes; `force` skips the cache.
 #[tauri::command]
-pub async fn account_usage(account_id: String, force: Option<bool>) -> Result<AccountUsage, String> {
+pub async fn account_usage(
+    account_id: String,
+    force: Option<bool>,
+) -> Result<AccountUsage, String> {
     let force = force.unwrap_or(false);
     if !force {
         if let Ok(map) = cache().lock() {
@@ -435,7 +488,11 @@ mod tests {
 
     fn jwt(payload: &str) -> String {
         let enc = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        format!("{}.{}.sig", enc.encode(b"{\"alg\":\"HS256\"}"), enc.encode(payload))
+        format!(
+            "{}.{}.sig",
+            enc.encode(b"{\"alg\":\"HS256\"}"),
+            enc.encode(payload)
+        )
     }
 
     fn json(s: &str) -> Value {
@@ -467,21 +524,27 @@ mod tests {
         let mut u = AccountUsage::default();
         apply_plan_info(
             &mut u,
-            &json(r#"{"planInfo":{"planName":"Premium","price":"","billingCycleEnd":"1794648460548",
-                "includedUsagePeriod":"INCLUDED_USAGE_PERIOD_WEEKLY","includedUsageResetsAt":"1794994058385"}}"#),
+            &json(
+                r#"{"planInfo":{"planName":"Premium","price":"","billingCycleEnd":"1794648460548",
+                "includedUsagePeriod":"INCLUDED_USAGE_PERIOD_WEEKLY","includedUsageResetsAt":"1794994058385"}}"#,
+            ),
         );
         apply_current_period(
             &mut u,
-            &json(r#"{"billingCycleStart":"1794389258385","billingCycleEnd":"1794994058385",
+            &json(
+                r#"{"billingCycleStart":"1794389258385","billingCycleEnd":"1794994058385",
                 "planUsage":{"remainingBonus":false,"autoPercentUsed":0.2166,"totalPercentUsed":0.2166},
-                "spendLimitUsage":{"limitType":"user"},"enabled":true}"#),
+                "spendLimitUsage":{"limitType":"user"},"enabled":true}"#,
+            ),
         );
         apply_usage_summary(
             &mut u,
-            &json(r#"{"billingCycleStart":"2026-11-01T00:00:00.000Z","billingCycleEnd":"2026-12-01T00:00:00.000Z",
+            &json(
+                r#"{"billingCycleStart":"2026-11-01T00:00:00.000Z","billingCycleEnd":"2026-12-01T00:00:00.000Z",
                 "membershipType":"premium","individualUsage":{"plan":{"enabled":true,"used":0,"limit":4615,
                 "remaining":4615,"breakdown":{"included":0,"bonus":0,"total":0},"totalPercentUsed":0},
-                "onDemand":{"enabled":false,"used":0,"limit":null,"remaining":null}},"teamUsage":{}}"#),
+                "onDemand":{"enabled":false,"used":0,"limit":null,"remaining":null}},"teamUsage":{}}"#,
+            ),
         );
         apply_stripe_profile(
             &mut u,
@@ -491,7 +554,10 @@ mod tests {
         assert_eq!(u.plan_name.as_deref(), Some("Premium"));
         assert_eq!(u.subscription_status.as_deref(), Some("active"));
         // Weekly included-usage reset, not the monthly billing cycle.
-        assert_eq!(u.resets_at.as_deref(), Some("2026-11-18T09:27:38.385+00:00"));
+        assert_eq!(
+            u.resets_at.as_deref(),
+            Some("2026-11-18T09:27:38.385+00:00")
+        );
         assert_eq!(u.used_percent, Some(0.2166));
         assert_eq!(u.included_used_cents, Some(0.0));
         assert_eq!(u.included_limit_cents, Some(4615.0));
@@ -506,17 +572,25 @@ mod tests {
         let mut u = AccountUsage::default();
         apply_prepaid_billing(
             &mut u,
-            &json(r#"{"billingMode":"PREPAID_BILLING_MODE_PREPAID","eligible":true,"availableCents":"136",
+            &json(
+                r#"{"billingMode":"PREPAID_BILLING_MODE_PREPAID","eligible":true,"availableCents":"136",
                 "fundedCents":"500","spentCents":"364","topUps":[{"ticket":"1","origin":"TOPUP_MANUAL",
                 "amountCents":"500","status":"SUCCEEDED"}],"hasPaymentMethod":true,
-                "spentThisMonthCents":"364","uncoveredSpendCents":"0"}"#),
+                "spentThisMonthCents":"364","uncoveredSpendCents":"0"}"#,
+            ),
         );
-        apply_usage_summary(&mut u, &json(r#"{"billingCycleEnd":"2026-12-01T00:00:00.000Z"}"#));
+        apply_usage_summary(
+            &mut u,
+            &json(r#"{"billingCycleEnd":"2026-12-01T00:00:00.000Z"}"#),
+        );
         assert_eq!(u.credit_available_cents, Some(136.0));
         assert_eq!(u.credit_spent_month_cents, Some(364.0));
         assert_eq!(u.credit_auto_top_up, Some(false));
         assert_eq!(u.credit_uncovered_cents, None);
-        assert_eq!(u.monthly_resets_at.as_deref(), Some("2026-12-01T00:00:00.000Z"));
+        assert_eq!(
+            u.monthly_resets_at.as_deref(),
+            Some("2026-12-01T00:00:00.000Z")
+        );
 
         // Not prepaid, or never funded: no credit row.
         for body in [
@@ -532,9 +606,11 @@ mod tests {
         let mut u = AccountUsage::default();
         apply_prepaid_billing(
             &mut u,
-            &json(r#"{"billingMode":"PREPAID_BILLING_MODE_PREPAID","availableCents":"0","fundedCents":"2000",
+            &json(
+                r#"{"billingMode":"PREPAID_BILLING_MODE_PREPAID","availableCents":"0","fundedCents":"2000",
                 "spentThisMonthCents":"2000","uncoveredSpendCents":"310",
-                "autoTopUp":{"enabled":true,"thresholdCents":"500","topUpAmountCents":"2000"}}"#),
+                "autoTopUp":{"enabled":true,"thresholdCents":"500","topUpAmountCents":"2000"}}"#,
+            ),
         );
         assert_eq!(u.credit_available_cents, Some(0.0));
         assert_eq!(u.credit_auto_top_up, Some(true));
@@ -548,9 +624,11 @@ mod tests {
         let mut u = AccountUsage::default();
         apply_usage_summary(
             &mut u,
-            &json(r#"{"billingCycleEnd":"2026-12-01T00:00:00.000Z","membershipType":"pro_plus",
+            &json(
+                r#"{"billingCycleEnd":"2026-12-01T00:00:00.000Z","membershipType":"pro_plus",
               "individualUsage":{"plan":{"used":1500,"limit":2000,"breakdown":{"included":1240,"bonus":260}},
-              "onDemand":{"enabled":true,"used":310,"limit":5000}}}"#),
+              "onDemand":{"enabled":true,"used":310,"limit":5000}}}"#,
+            ),
         );
         assert_eq!(u.plan_name.as_deref(), Some("Pro Plus"));
         assert_eq!(u.resets_at.as_deref(), Some("2026-12-01T00:00:00.000Z"));
@@ -579,7 +657,10 @@ mod tests {
     #[ignore]
     fn live_cursor_account() {
         let data_dir = crate::paths::active_data_dir().unwrap();
-        let db = data_dir.join("User").join("globalStorage").join("state.vscdb");
+        let db = data_dir
+            .join("User")
+            .join("globalStorage")
+            .join("state.vscdb");
         let snap = read_auth_keys(&db).unwrap();
         let u = tauri::async_runtime::block_on(fetch_usage(&snap, &data_dir, false));
         println!("{}", serde_json::to_string_pretty(&u).unwrap());
@@ -589,7 +670,8 @@ mod tests {
     #[test]
     fn offline_falls_back_to_snapshot_plan() {
         let mut snap = AuthSnapshot::default();
-        snap.keys.insert("cursorAuth/stripeMembershipType".into(), "premium".into());
+        snap.keys
+            .insert("cursorAuth/stripeMembershipType".into(), "premium".into());
         let u = tauri::async_runtime::block_on(fetch_usage(&snap, &std::env::temp_dir(), false));
         assert_eq!(u.status, "unavailable");
         assert_eq!(u.plan_name.as_deref(), Some("Premium"));

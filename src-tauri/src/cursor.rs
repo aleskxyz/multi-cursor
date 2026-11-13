@@ -98,9 +98,7 @@ fn with_cursor_processes<R>(f: impl FnOnce(Vec<&Process>) -> R) -> R {
         .filter(|p| p.pid() != own)
         // An exited process whose parent hasn't collected it yet is not running.
         .filter(|p| !matches!(p.status(), ProcessStatus::Zombie | ProcessStatus::Dead))
-        .filter(|p| {
-            crate::platform::is_cursor_main_process(&p.name().to_string_lossy(), p.exe())
-        })
+        .filter(|p| crate::platform::is_cursor_main_process(&p.name().to_string_lossy(), p.exe()))
         .collect();
     f(procs)
 }
@@ -286,9 +284,18 @@ mod tests {
         let vars = [
             ("APPDIR", m.to_string()),
             ("APPIMAGE", "/home/me/Multi.AppImage".into()),
-            ("LD_LIBRARY_PATH", format!("{m}/usr/lib/:{m}/usr/lib/x86_64-linux-gnu/:")),
-            ("PATH", format!("{m}/usr/bin/:{m}/bin/:/home/me/.local/bin:/usr/bin")),
-            ("XDG_DATA_DIRS", format!("{m}/usr/share/:{m}/usr/share:/usr/share:")),
+            (
+                "LD_LIBRARY_PATH",
+                format!("{m}/usr/lib/:{m}/usr/lib/x86_64-linux-gnu/:"),
+            ),
+            (
+                "PATH",
+                format!("{m}/usr/bin/:{m}/bin/:/home/me/.local/bin:/usr/bin"),
+            ),
+            (
+                "XDG_DATA_DIRS",
+                format!("{m}/usr/share/:{m}/usr/share:/usr/share:"),
+            ),
             ("GTK_PATH", format!("{m}//usr/lib/gtk-3.0")),
             ("GTK_THEME", "Adwaita:light".into()),
             ("PYTHONHOME", format!("{m}/usr/")),
@@ -305,7 +312,10 @@ mod tests {
         assert_eq!(get("LD_LIBRARY_PATH"), Some(None));
         assert_eq!(get("GTK_PATH"), Some(None));
         assert_eq!(get("PYTHONHOME"), Some(None));
-        assert_eq!(get("PATH"), Some(Some("/home/me/.local/bin:/usr/bin".into())));
+        assert_eq!(
+            get("PATH"),
+            Some(Some("/home/me/.local/bin:/usr/bin".into()))
+        );
         assert_eq!(get("XDG_DATA_DIRS"), Some(Some("/usr/share".into())));
         assert_eq!(get("HOME"), None, "unrelated variables are left alone");
     }

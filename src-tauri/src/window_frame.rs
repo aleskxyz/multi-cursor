@@ -4,9 +4,9 @@
 //! displays (Retina laptop + 1× externals). AppKit's frame autosave speaks the
 //! same coordinate space as the Dock and handles multi-monitor correctly.
 
-use tauri::{AppHandle, Manager, RunEvent};
 #[cfg(target_os = "macos")]
 use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, RunEvent};
 
 #[cfg(target_os = "macos")]
 const AUTOSAVE_NAME: &str = "MultiCursorMainWindow";
@@ -17,16 +17,14 @@ fn apply_macos_frame_autosave(window: &WebviewWindow) -> Result<(), String> {
     use objc2_app_kit::NSWindow;
     use objc2_foundation::NSString;
 
-    let ptr = window
-        .ns_window()
-        .map_err(|e| format!("ns_window: {e}"))? as *mut NSWindow;
+    let ptr = window.ns_window().map_err(|e| format!("ns_window: {e}"))? as *mut NSWindow;
     if ptr.is_null() {
         return Err("ns_window was null".to_string());
     }
 
     // SAFETY: Tauri's ns_window is a valid NSWindow* for this WebviewWindow's lifetime.
-    let ns_window = unsafe { Retained::retain(ptr) }
-        .ok_or_else(|| "Failed to retain NSWindow".to_string())?;
+    let ns_window =
+        unsafe { Retained::retain(ptr) }.ok_or_else(|| "Failed to retain NSWindow".to_string())?;
     let name = NSString::from_str(AUTOSAVE_NAME);
 
     // Restores a previously saved frame if one exists, then enables autosave

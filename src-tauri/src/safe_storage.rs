@@ -60,20 +60,26 @@ pub fn decrypt_token(value: &str, data_dir: &Path, retry_key: bool) -> Result<St
         .split_once(':')
         .ok_or_else(|| TokenError::Invalid("Malformed encrypted token".to_string()))?;
     if version != "v1" {
-        return Err(TokenError::Invalid(format!("Unsupported token encryption {version}")));
+        return Err(TokenError::Invalid(format!(
+            "Unsupported token encryption {version}"
+        )));
     }
     let blob = base64::engine::general_purpose::STANDARD
         .decode(payload)
         .map_err(|e| TokenError::Invalid(format!("Malformed encrypted token: {e}")))?;
     let plain = decrypt_os_crypt(&blob, data_dir, retry_key)?;
-    String::from_utf8(plain).map_err(|_| TokenError::Invalid("Decrypted token is not text".to_string()))
+    String::from_utf8(plain)
+        .map_err(|_| TokenError::Invalid("Decrypted token is not text".to_string()))
 }
 
 enum KeyState {
     /// `recheck`: a decrypt failure may still mean the key went stale. Cleared
     /// after one refetch that didn't help, so a single bad token can't keep
     /// re-prompting; `retry_key` sets it again.
-    Ready { key: Vec<u8>, recheck: bool },
+    Ready {
+        key: Vec<u8>,
+        recheck: bool,
+    },
     Failed(String),
 }
 
@@ -131,11 +137,23 @@ fn with_key(
     match fetch() {
         Ok(fresh) if fresh != key => {
             let result = decrypt(&fresh).map_err(TokenError::Invalid);
-            cache.insert(scope, KeyState::Ready { key: fresh, recheck: true });
+            cache.insert(
+                scope,
+                KeyState::Ready {
+                    key: fresh,
+                    recheck: true,
+                },
+            );
             result
         }
         _ => {
-            cache.insert(scope, KeyState::Ready { key, recheck: false });
+            cache.insert(
+                scope,
+                KeyState::Ready {
+                    key,
+                    recheck: false,
+                },
+            );
             Err(TokenError::Invalid(err))
         }
     }
@@ -175,7 +193,9 @@ fn decrypt_os_crypt(blob: &[u8], _data_dir: &Path, retry_key: bool) -> Result<Ve
     } else if let Some(body) = blob.strip_prefix(b"v10") {
         cbc_decrypt(&pbkdf2_key(b"peanuts", 1), body).map_err(TokenError::Invalid)
     } else {
-        Err(TokenError::Invalid("Unknown token encryption version".to_string()))
+        Err(TokenError::Invalid(
+            "Unknown token encryption version".to_string(),
+        ))
     }
 }
 
@@ -232,8 +252,8 @@ mod windows {
     /// The AES key from `<data dir>/Local State`, unwrapped with DPAPI.
     pub fn master_key(data_dir: &Path) -> Result<Vec<u8>, String> {
         let path = data_dir.join("Local State");
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Read Cursor Local State: {e}"))?;
+        let raw =
+            std::fs::read_to_string(&path).map_err(|e| format!("Read Cursor Local State: {e}"))?;
         let json: serde_json::Value =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid Local State: {e}"))?;
         let encoded = json
@@ -380,7 +400,13 @@ mod linux {
     fn libsecret() -> Lookup {
         lookup(
             "secret-tool",
-            &["lookup", "xdg:schema", "chrome_libsecret_os_crypt_password_v2", "application", "Cursor"],
+            &[
+                "lookup",
+                "xdg:schema",
+                "chrome_libsecret_os_crypt_password_v2",
+                "application",
+                "Cursor",
+            ],
         )
     }
 
@@ -388,7 +414,13 @@ mod linux {
     fn kwallet() -> Lookup {
         lookup(
             "kwallet-query",
-            &["-f", "Chromium Keys", "-r", "Chromium Safe Storage", "kdewallet"],
+            &[
+                "-f",
+                "Chromium Keys",
+                "-r",
+                "Chromium Safe Storage",
+                "kdewallet",
+            ],
         )
     }
 
@@ -416,9 +448,11 @@ mod linux {
                 Lookup::NoTool => {}
             }
         }
-        Err("No keyring tool found (install secret-tool for GNOME Keyring \
+        Err(
+            "No keyring tool found (install secret-tool for GNOME Keyring \
              or kwallet-query for KWallet)"
-            .to_string())
+                .to_string(),
+        )
     }
 }
 
@@ -481,7 +515,11 @@ mod tests {
         };
         // Only the newest key decrypts.
         let decrypt = |k: &[u8]| {
-            if k == [version.get()] { Ok(b"plain".to_vec()) } else { Err("bad key".to_string()) }
+            if k == [version.get()] {
+                Ok(b"plain".to_vec())
+            } else {
+                Err("bad key".to_string())
+            }
         };
         assert!(with_key(scope("stale"), false, fetch, decrypt).is_ok());
         version.set(version.get() + 1); // Cursor regenerated its key
@@ -544,7 +582,10 @@ mod tests {
     #[test]
     fn plain_tokens_pass_through() {
         let dir = std::env::temp_dir();
-        assert_eq!(decrypt_token(" abc.def.ghi ", &dir, false).unwrap(), "abc.def.ghi");
+        assert_eq!(
+            decrypt_token(" abc.def.ghi ", &dir, false).unwrap(),
+            "abc.def.ghi"
+        );
     }
 
     #[test]
