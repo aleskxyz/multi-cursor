@@ -1,0 +1,82 @@
+name: Prepare release
+
+# Step 1 of a release: Actions -> Prepare release -> Run workflow, enter the
+# version. This opens a "Release v<version>" pull request that sets the
+# version in every file. Merging it starts the Release workflow.
+#
+# Needs: Settings -> Actions -> General -> "Allow GitHub Actions to create
+# and approve pull requests".
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 1.2.0 (or 1.2.0-beta.1 for a pre-release)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  pull-request:
+    name: Open release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the release/v<version> branch
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_VERSION: ${{ inputs.version }}
+      BASE: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION#v}"
+          tag="v${version}"
+          # Exit code 2 means "no such tag"; anything else is a failed lookup.
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "::error::${tag} is already released."
+            exit 1
+          elif [ $? -ne 2 ]; then
+            echo "::error::Could not check whether ${tag} exists."
+            exit 1
+          fi
+          scripts/version.sh "$version" # validates the version and that it's newer
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Open the pull request
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          branch="release/${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Release ${TAG}"
+          git push origin "$branch"
+          gh pr create --base "$BASE" --head "$branch" --title "Release ${TAG}" --body "$(cat <<EOF
+          Sets the version to **${VERSION}** in package.json, package-lock.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml and src-tauri/Cargo.lock.
+
+          Merging this starts the [Release workflow](../actions/workflows/release.yml): it runs CI, builds every platform and creates a **draft** release. Nothing is public until the draft is published, which also creates the \`${TAG}\` tag.
+
+          CI does not run on this pull request because a workflow opened it; the Release workflow runs it after the merge.
+          EOF
+          )"

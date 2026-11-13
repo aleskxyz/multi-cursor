@@ -55,6 +55,20 @@ cargo test --lib --locked
 
 The Rust version is pinned in [`rust-toolchain.toml`](rust-toolchain.toml) and the Node version in [`.nvmrc`](.nvmrc); `rustup` picks up the Rust version automatically.
 
+To get installable packages for every platform from any branch, run **Actions → Build → Run workflow**. The packages are attached to the run for 14 days.
+
+## Releases
+
+Versions follow [SemVer](https://semver.org): patch for fixes, minor for new features, major for changes older versions can't read (such as the `~/.multi-cursor/` layout). The version is stored in five files; [`scripts/version.sh`](scripts/version.sh) prints it and checks that they agree.
+
+1. **Actions → Prepare release → Run workflow**, and enter the version (e.g. `1.2.0`, or `1.2.0-beta.1` for a pre-release). It opens a "Release v1.2.0" pull request that sets the version everywhere. This needs **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**.
+2. **Merge the pull request.** The [Release workflow](.github/workflows/release.yml) then runs CI, builds every platform and creates a **draft** release with the packages, `SHA256SUMS.txt` and build provenance.
+3. **Review the draft and click Publish.** Publishing creates the `v1.2.0` tag. It is also what the app's **Check for updates** sees; pre-releases are never offered as updates.
+
+Nothing is public before step 3, so a failed build leaves nothing to clean up: fix it and merge, or rerun **Actions → Release**, which refreshes the draft for the latest commit. Never move a published tag; release a new patch version instead.
+
+macOS builds are signed and notarized only if the repository has the signing secrets described in [macOS distribution](docs/macos-distribution.md#sign-in-github-actions); Windows builds are unsigned.
+
 ## App icon
 
 The branded icon source is [`assets/logo.png`](assets/logo.png). The main window uses a copy at `public/assets/logo.png`.

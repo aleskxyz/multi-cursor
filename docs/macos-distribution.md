@@ -73,6 +73,21 @@ Unsigned or ad-hoc-signed apps are appropriate only for the Mac on which they we
 
 Distribute a notarized DMG or a ZIP archive of the signed `.app`. People installing it can drag the app into `/Applications` or `~/Applications`.
 
+## Sign in GitHub Actions
+
+The [Build workflow](../.github/workflows/build.yml), which the Release workflow also runs, signs and notarizes the macOS DMG when the repository has these secrets (**Settings → Secrets and variables → Actions**). Without `APPLE_CERTIFICATE` and `APPLE_SIGNING_IDENTITY` it builds an unsigned app, and the release notes say so.
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | The Developer ID Application certificate exported from Keychain Access as `.p12`, base64-encoded (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | The password chosen when exporting the `.p12` |
+| `APPLE_SIGNING_IDENTITY` | The identity name, e.g. `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | Apple ID email used for notarization (optional: without it the app is signed but not notarized) |
+| `APPLE_PASSWORD` | App-specific password for that Apple ID |
+| `APPLE_TEAM_ID` | Your 10-character Team ID |
+
+These are the environment variables Tauri reads; see the [Tauri macOS code-signing documentation](https://v2.tauri.app/distribute/sign/macos/) if its options change.
+
 ## Release checklist
 
 - Build from a clean, tested revision.
