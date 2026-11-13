@@ -1,0 +1,115 @@
+name: Build
+
+# Package the app for every platform and attach the packages to the run.
+# Start it by hand (Actions -> Build -> Run workflow, or
+# `gh workflow run build.yml --ref <branch>`); the Release workflow also
+# calls it. Tests are in ci.yml.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One universal app for Intel and Apple Silicon. DMG keeps the
+          # .app's file permissions (a zipped .app artifact would lose them).
+          # The local default stays a plain .app (tauri.macos.conf.json).
+          - name: macos-universal
+            runner: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build-args: --target universal-apple-darwin --bundles app,dmg
+          # Ubuntu 22.04 (glibc 2.35) so the packages also run on older distros.
+          - name: linux-x64
+            runner: ubuntu-22.04
+          - name: linux-arm64
+            runner: ubuntu-22.04-arm
+          - name: windows-x64
+            runner: windows-latest
+          - name: windows-arm64
+            runner: windows-11-arm
+            # WiX (MSI) has no ARM64 support; the NSIS installer is per-user anyway.
+            build-args: --bundles nsis
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    # A normal build takes ~10 minutes; don't let a stuck runner hold a slot for hours.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+        with:
+          rust-targets: ${{ matrix.rust-targets }}
+          cache-key: build-${{ matrix.name }}
+
+      # Optional: sign and notarize when the repository has these secrets
+      # (see docs/macos-distribution.md). Without them the app is unsigned.
+      # Only set variables are passed on, since Tauri treats an empty one as set.
+      - name: Use macOS signing secrets
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "No signing secrets: building an unsigned app."
+            exit 0
+          fi
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            [ -n "$value" ] || continue
+            delimiter="END_$(openssl rand -hex 8)"
+            { echo "$name<<$delimiter"; echo "$value"; echo "$delimiter"; } >> "$GITHUB_ENV"
+          done
+          if [ -n "$APPLE_ID" ]; then
+            echo "Signing and notarizing."
+          else
+            echo "Signing (no APPLE_ID, so not notarizing)."
+          fi
+
+      - name: Build
+        shell: bash
+        run: npx tauri build ${{ matrix.build-args }} -- --locked
+
+      # Clean, space-free names: Multi-Cursor_<version>_<platform>.<ext>
+      # (`--target` builds land in target/<triple>/release, others in target/release).
+      - name: Collect packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          mkdir -p packages
+          shopt -s nullglob
+          for f in src-tauri/target/{,*/}release/bundle/{dmg/*.dmg,deb/*.deb,rpm/*.rpm,appimage/*.AppImage,nsis/*.exe,msi/*.msi}; do
+            case "$f" in
+              *.exe) suffix="-setup.exe" ;;
+              *) suffix=".${f##*.}" ;;
+            esac
+            dest="packages/Multi-Cursor_${version}_${{ matrix.name }}${suffix}"
+            if [ -e "$dest" ]; then echo "duplicate package for $dest" >&2; exit 1; fi
+            cp "$f" "$dest"
+          done
+          ls -l packages
+          [ -n "$(ls packages)" ]
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: multi-cursor-${{ matrix.name }}
+          path: packages/*
+          if-no-files-found: error
+          retention-days: 14
