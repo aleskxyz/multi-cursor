@@ -70,7 +70,7 @@ pub fn show(version: &str) {
         let total_len = credits_ns.length();
         let url_len = url_ns.length();
         if url_len > 0 && url_len <= total_len {
-            let range = NSRange::new((total_len - url_len) as usize, url_len as usize);
+            let range = NSRange::new(total_len - url_len, url_len);
             unsafe {
                 credits.addAttribute_value_range(
                     NSLinkAttributeName,
