@@ -17,6 +17,7 @@ Cursor currently supports one signed-in account per installation. If you move be
 * No wrapper scripts or special launch commands
 * Switch accounts without duplicating environment data, or
 * Create fully isolated Cursor environments
+* See each account's plan, included usage, reset date, prepaid credit and on-demand spend at a glance
 * Fully open source and free to use
 
 </div>
@@ -286,6 +287,7 @@ It provides the isolation people seek from `--user-data-dir`, while retaining th
 - Deleting an inactive environment moves its pool folders to Trash (Recycle Bin on Windows). Multi Cursor never deletes the live `Cursor` or `~/.cursor` folders.
 - Environment folders are never removed automatically. If `~/.multi-cursor/config.json` is lost, existing environment folders are restored as "Recovered environment" entries on the next start.
 - The config is saved atomically, so a crash while saving can't leave it half-written.
+- To show plan and usage on account cards, Multi Cursor reads each account's stored login token and sends it only to Cursor's own servers (`api2.cursor.sh` and `cursor.com`), the same endpoints Cursor's IDE and dashboard use. Newer Cursor versions encrypt that token, so Multi Cursor decrypts it in memory the same way Cursor does: with your Windows user's key (DPAPI), the "Cursor Safe Storage" Keychain item on macOS (macOS asks for permission; choose **Always Allow**, or it asks again each time Multi Cursor starts), or your desktop keyring on Linux (GNOME Keyring via `secret-tool`, from the `libsecret-tools` package, or KWallet via `kwallet-query`). The key is unlocked at most once per session for all accounts, and if you deny access, Multi Cursor will not ask again until you right-click an account and choose **Refresh usage**; the cards then show only the plan name. The decrypted token is never written to disk, and tokens are never refreshed or changed. These endpoints are undocumented, so if Cursor changes them the cards fall back to showing the plan name only.
 
 ## FAQ
 

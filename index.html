@@ -45,9 +45,11 @@
         <ul id="account-list" class="account-list"></ul>
       </section>
 
-      <p id="error" class="error hidden"></p>
-      <p id="success" class="success hidden"></p>
-      <p id="hint" class="hint hidden"></p>
+      <!-- Floating messages: they overlay the list instead of resizing it. -->
+      <div class="toasts" aria-live="polite">
+        <p id="error" class="error toast hidden" title="Click to dismiss"></p>
+        <p id="success" class="success toast hidden" title="Click to dismiss"></p>
+      </div>
       <div id="progress" class="progress hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100">
         <div id="progress-label" class="progress-label"></div>
         <div class="progress-track">
@@ -63,13 +65,16 @@
           <span aria-hidden="true">·</span>
           <button type="button" id="updates-link" class="link">Check for updates</button>
         </nav>
+        <button type="button" id="switch" class="switch" title="Make this Cursor's current account without opening Cursor">Switch</button>
         <button type="button" id="launch" class="primary launch">Launch</button>
       </footer>
     </div>
 
     <div id="ctx-menu" class="ctx-menu hidden" role="menu" aria-label="Account actions">
       <button type="button" id="ctx-launch" role="menuitem">Launch</button>
+      <button type="button" id="ctx-switch" role="menuitem">Switch</button>
       <button type="button" id="ctx-rename" role="menuitem">Rename…</button>
+      <button type="button" id="ctx-usage" role="menuitem">Refresh usage</button>
       <div class="ctx-sep" role="separator"></div>
       <button type="button" id="ctx-delete" role="menuitem" class="danger-item">Delete…</button>
     </div>

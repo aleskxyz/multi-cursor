@@ -750,6 +750,7 @@ pub fn delete_account(id: String) -> Result<AppState, String> {
 
     delete_snapshot(&account.env_id, &account.id)?;
     cfg.accounts.retain(|a| a.id != id);
+    crate::usage::forget(&id);
 
     if is_active {
         cfg.active.account_id = cfg
@@ -769,39 +770,44 @@ pub fn delete_account(id: String) -> Result<AppState, String> {
     state_from(cfg)
 }
 
+/// Make `env_id` / `account_id` Cursor's current setup, then start Cursor
+/// unless `open` is false ("Switch": the user opens Cursor themselves).
 #[tauri::command]
-pub fn launch(env_id: String, account_id: Option<String>) -> Result<AppState, String> {
+pub fn launch(
+    env_id: String,
+    account_id: Option<String>,
+    open: Option<bool>,
+) -> Result<AppState, String> {
     let mut cfg = load_config()?;
     bootstrap_default_environment(&mut cfg)?;
     if !cfg.environments.iter().any(|e| e.id == env_id) {
         return Err("Environment not found".to_string());
     }
 
+    // Cursor holds the auth database while it runs.
+    if cursor_running() {
+        let same = account_id.is_some()
+            && cfg.active.env_id.as_deref() == Some(env_id.as_str())
+            && cfg.active.account_id == account_id;
+        return Err(if same {
+            "Cursor is already running with this account.".to_string()
+        } else {
+            "Cursor is still running. Wait for it to quit before switching.".to_string()
+        });
+    }
+
     if let Some(ref account_id) = account_id {
-        let same = cfg.active.env_id.as_deref() == Some(env_id.as_str())
-            && cfg.active.account_id.as_deref() == Some(account_id.as_str());
-        if cursor_running() && same {
-            return Err("Cursor is already running with this account.".to_string());
-        }
-        if cursor_running() {
-            return Err(
-                "Cursor is still running. Wait for it to quit before launching.".to_string(),
-            );
-        }
         apply_account(&mut cfg, &env_id, account_id)?;
     } else {
-        if cursor_running() {
-            return Err(
-                "Cursor is still running. Wait for it to quit before launching.".to_string(),
-            );
-        }
         discard_abandoned_pending(&mut cfg, None)?;
         switch_environment(&mut cfg, &env_id)?;
         cfg.active.account_id = None;
         save_config(&cfg)?;
     }
 
-    launch_cursor(&cfg.cursor_launch())?;
+    if open.unwrap_or(true) {
+        launch_cursor(&cfg.cursor_launch())?;
+    }
     state_from(cfg)
 }
 

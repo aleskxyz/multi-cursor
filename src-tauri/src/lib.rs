@@ -5,7 +5,9 @@ mod copy_progress;
 mod cursor;
 mod paths;
 mod platform;
+mod safe_storage;
 mod updates;
+mod usage;
 mod window_frame;
 
 #[cfg(target_os = "macos")]
@@ -146,6 +148,7 @@ pub fn run() {
             commands::is_cursor_running,
             updates::check_for_updates,
             updates::open_url,
+            usage::account_usage,
             about::about_info,
         ])
         .build(tauri::generate_context!())

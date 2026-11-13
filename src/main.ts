@@ -19,6 +19,37 @@ interface Account {
   pendingLogin: boolean;
 }
 
+/** Plan and usage from Cursor's servers (amounts in US cents). */
+interface AccountUsage {
+  status: "ok" | "expired" | "locked" | "unavailable" | string;
+  planName?: string | null;
+  subscriptionStatus?: string | null;
+  /** Why the status isn't "ok". */
+  detail?: string | null;
+  /** Share of included usage spent, 0–100. */
+  usedPercent?: number | null;
+  includedUsedCents?: number | null;
+  includedLimitCents?: number | null;
+  bonusCents?: number | null;
+  onDemandEnabled?: boolean | null;
+  onDemandUsedCents?: number | null;
+  onDemandLimitCents?: number | null;
+  /** When included usage resets (ISO 8601). */
+  resetsAt?: string | null;
+  /** Prepaid "additional usage" credit left. */
+  creditAvailableCents?: number | null;
+  /** Prepaid credit spent this calendar month. */
+  creditSpentMonthCents?: number | null;
+  creditAutoTopUp?: boolean | null;
+  creditTopUpAmountCents?: number | null;
+  creditTopUpThresholdCents?: number | null;
+  /** Spend beyond the prepaid credit. */
+  creditUncoveredCents?: number | null;
+  /** When the monthly additional-usage figures reset (ISO 8601). */
+  monthlyResetsAt?: string | null;
+  fetchedAt: string;
+}
+
 interface ActiveSelection {
   envId?: string | null;
   accountId?: string | null;
@@ -73,11 +104,11 @@ const els = {
   status: document.querySelector("#status") as HTMLElement,
   error: document.querySelector("#error") as HTMLElement,
   success: document.querySelector("#success") as HTMLElement,
-  hint: document.querySelector("#hint") as HTMLElement,
   progress: document.querySelector("#progress") as HTMLElement,
   progressLabel: document.querySelector("#progress-label") as HTMLElement,
   progressBar: document.querySelector("#progress-bar") as HTMLElement,
   launch: document.querySelector("#launch") as HTMLButtonElement,
+  switchBtn: document.querySelector("#switch") as HTMLButtonElement,
   envNew: document.querySelector("#env-new") as HTMLButtonElement,
   envRename: document.querySelector("#env-rename") as HTMLButtonElement,
   envDelete: document.querySelector("#env-delete") as HTMLButtonElement,
@@ -96,8 +127,10 @@ const els = {
   modalConfirm: document.querySelector("#modal-confirm") as HTMLButtonElement,
   ctxMenu: document.querySelector("#ctx-menu") as HTMLElement,
   ctxLaunch: document.querySelector("#ctx-launch") as HTMLButtonElement,
+  ctxSwitch: document.querySelector("#ctx-switch") as HTMLButtonElement,
   ctxRename: document.querySelector("#ctx-rename") as HTMLButtonElement,
   ctxDelete: document.querySelector("#ctx-delete") as HTMLButtonElement,
+  ctxUsage: document.querySelector("#ctx-usage") as HTMLButtonElement,
   footerLinks: document.querySelector("#footer-links") as HTMLElement,
   footerVersion: document.querySelector("#footer-version") as HTMLElement,
   aboutLink: document.querySelector("#about-link") as HTMLButtonElement,
@@ -125,10 +158,23 @@ let selectedEnvId: string | null = null;
 let selectedAccountId: string | null = null;
 /** User picked an account in the list; do not clobber from polling/refresh. */
 let userPickedAccount = false;
+/** Last plan/usage result per account id; the backend also caches for a few minutes. */
+const usageCache = new Map<string, AccountUsage>();
+/** When each `usageCache` entry arrived (local clock; `fetchedAt` is when the backend fetched it). */
+const usageReceivedAt = new Map<string, number>();
+const usageInFlight = new Set<string>();
+
+function forgetUsage(accountId: string) {
+  usageCache.delete(accountId);
+  usageReceivedAt.delete(accountId);
+}
+
+function accountCard(accountId: string): HTMLElement | null {
+  return els.accountList.querySelector<HTMLElement>(`li[data-id="${CSS.escape(accountId)}"]`);
+}
 let modalResolver: ((value: PromptResult) => void) | null = null;
 /** Captured before modal fields are cleared (checkbox would otherwise always be false). */
 let lastModalChecked = false;
-let flashUntil = 0;
 let busy = false;
 let busyLabel: string | null = null;
 let diskUsageEnvId: string | null = null;
@@ -136,39 +182,43 @@ let diskUsageInFlight = false;
 /** Env id to measure after the in-flight `du` finishes (rapid dropdown switches). */
 let diskUsageQueued: string | null = null;
 
-function showError(message: string | null) {
+let toastTimer: number | undefined;
+
+/** Hide the floating message after `ms` (none for sticky "working…" messages). */
+function scheduleToastHide(ms: number | null) {
+  window.clearTimeout(toastTimer);
+  if (ms != null) toastTimer = window.setTimeout(() => hideToasts(), ms);
+}
+
+function hideToast(el: HTMLElement) {
+  el.classList.add("hidden");
+  el.textContent = "";
+}
+
+function hideToasts() {
+  window.clearTimeout(toastTimer);
+  hideToast(els.error);
+  hideToast(els.success);
+}
+
+/** Show one toast (replacing the other), or hide it when `message` is empty. */
+function showToast(el: HTMLElement, message: string | null, hideAfterMs: number | null) {
   if (!message) {
-    els.error.classList.add("hidden");
-    els.error.textContent = "";
+    hideToast(el);
     return;
   }
-  els.success.classList.add("hidden");
-  els.error.textContent = message;
-  els.error.classList.remove("hidden");
-  flashUntil = Date.now() + 8000;
+  hideToast(el === els.error ? els.success : els.error);
+  el.textContent = message;
+  el.classList.remove("hidden");
+  scheduleToastHide(hideAfterMs);
+}
+
+function showError(message: string | null) {
+  showToast(els.error, message, 10_000);
 }
 
 function showSuccess(message: string | null, opts?: { sticky?: boolean }) {
-  if (!message) {
-    els.success.classList.add("hidden");
-    els.success.textContent = "";
-    flashUntil = 0;
-    return;
-  }
-  els.error.classList.add("hidden");
-  els.success.textContent = message;
-  els.success.classList.remove("hidden");
-  flashUntil = opts?.sticky ? Number.POSITIVE_INFINITY : Date.now() + 8000;
-}
-
-function showHint(message: string | null) {
-  if (!message) {
-    els.hint.classList.add("hidden");
-    els.hint.textContent = "";
-    return;
-  }
-  els.hint.textContent = message;
-  els.hint.classList.remove("hidden");
+  showToast(els.success, message, opts?.sticky ? null : 5_000);
 }
 
 function setProgress(percent: number | null, label?: string) {
@@ -380,8 +430,10 @@ function openAccountMenu(account: Account, x: number, y: number) {
     ? els.launch.textContent || "Launch"
     : "Launch";
   els.ctxLaunch.disabled = els.launch.disabled;
+  els.ctxSwitch.disabled = els.switchBtn.disabled;
   els.ctxRename.disabled = els.acctRename.disabled;
   els.ctxDelete.disabled = els.acctDelete.disabled;
+  els.ctxUsage.disabled = account.pendingLogin || usageInFlight.has(account.id);
 
   const menu = els.ctxMenu;
   menu.classList.remove("hidden");
@@ -413,8 +465,18 @@ function setupContextMenus() {
     if (!button.disabled) button.click();
   };
   els.ctxLaunch.addEventListener("click", () => run(els.launch));
+  els.ctxSwitch.addEventListener("click", () => run(els.switchBtn));
   els.ctxRename.addEventListener("click", () => run(els.acctRename));
   els.ctxDelete.addEventListener("click", () => run(els.acctDelete));
+  els.ctxUsage.addEventListener("click", () => {
+    closeAccountMenu();
+    if (!selectedAccountId) return;
+    const id = selectedAccountId;
+    forgetUsage(id);
+    const card = accountCard(id);
+    if (card) renderUsage(card, undefined);
+    void loadUsage(id, true);
+  });
 
   // Close on outside click, Escape, scroll, resize or losing focus.
   document.addEventListener("mousedown", (e) => {
@@ -642,20 +704,38 @@ function render() {
     if (meta.textContent) body.appendChild(meta);
     li.appendChild(body);
 
+    // Right column: plan pill + status badge, reset time underneath.
+    const side = document.createElement("div");
+    side.className = "side";
+    const sideTop = document.createElement("div");
+    sideTop.className = "side-top";
+    const planSlot = document.createElement("span");
+    planSlot.className = "plan-slot";
+    sideTop.appendChild(planSlot);
+    const isCurrent =
+      account.id === config.active.accountId && account.envId === config.active.envId;
     if (account.pendingLogin) {
       const badge = document.createElement("span");
       badge.className = "badge";
       badge.textContent = "waiting";
-      li.appendChild(badge);
-    } else if (
-      account.id === config.active.accountId &&
-      account.envId === config.active.envId
-    ) {
-      const badge = document.createElement("span");
-      badge.className = "badge current";
-      badge.textContent = "current";
-      li.appendChild(badge);
+      sideTop.appendChild(badge);
+    } else if (isCurrent) {
+      // Green dot on the avatar marks Cursor's current account.
+      avatar.classList.add("is-current");
+      avatar.title = "Current account";
+      avatar.setAttribute("aria-label", "Current account");
     }
+    side.appendChild(sideTop);
+    const sideNote = document.createElement("div");
+    sideNote.className = "side-note";
+    side.appendChild(sideNote);
+    li.appendChild(side);
+
+    // Full-width meters under the header row.
+    const usageBox = document.createElement("div");
+    usageBox.className = "usage";
+    li.appendChild(usageBox);
+    if (!account.pendingLogin) renderUsage(li, usageCache.get(account.id));
 
     li.addEventListener("click", () => {
       if (busy) return;
@@ -679,9 +759,6 @@ function render() {
 
   const hasEnv = Boolean(selectedEnvId);
   const hasAcct = Boolean(selectedAccountId);
-  const pending = accounts.some(
-    (a) => a.pendingLogin || a.name.startsWith("Signing in"),
-  );
   const alreadyRunning = isActiveSelectionRunning();
 
   const isCurrentEnv = Boolean(
@@ -696,36 +773,279 @@ function render() {
   els.acctRename.disabled = busy || !hasAcct;
   els.acctDelete.disabled = busy || !hasAcct;
   els.launch.disabled = busy || !hasEnv || !hasAcct || alreadyRunning;
+  const selectionIsCurrent =
+    config.active.envId === selectedEnvId && config.active.accountId === selectedAccountId;
+  els.switchBtn.disabled = busy || !hasEnv || !hasAcct || selectionIsCurrent;
 
   if (busy && busyLabel) {
     els.launch.textContent =
       busyLabel === "Closing…" ||
       busyLabel === "Launching…" ||
+      busyLabel === "Switching…" ||
       busyLabel === "Copying…" ||
       busyLabel === "Creating…" ||
       busyLabel === "Deleting…"
         ? busyLabel
         : "Launch";
   } else if (alreadyRunning) {
-    els.launch.textContent = "Already running";
+    els.launch.textContent = "Running";
   } else {
     els.launch.textContent = "Launch";
   }
 
-  if (pending) {
-    showHint("Waiting for sign-in… email will be captured automatically.");
-  } else if (!hasAcct) {
-    showHint("Add an account to sign in, or Launch after selecting one.");
-  } else if (!isCurrentEnv) {
-    showHint("Launch to switch Cursor’s current environment.");
-  } else if (selectedAccountId !== config.active.accountId) {
-    showHint("Launch to switch Cursor’s current account.");
-  } else if (Date.now() > flashUntil) {
-    showHint(null);
-  }
-
   // Defer so the accounts list paints before the (slow) disk-usage IPC starts.
   window.setTimeout(() => void refreshEnvDiskUsage(false), 0);
+  window.setTimeout(() => {
+    for (const account of accounts) {
+      if (!account.pendingLogin) void loadUsage(account.id, false);
+    }
+  }, 0);
+}
+
+function formatDollars(cents: number): string {
+  const dollars = cents / 100;
+  return dollars >= 100 || Number.isInteger(dollars)
+    ? `$${Math.round(dollars)}`
+    : `$${dollars.toFixed(2)}`;
+}
+
+function percentText(pct: number): string {
+  return pct > 0 && pct < 1 ? pct.toFixed(1) : String(Math.round(pct));
+}
+
+/** Short money for tight columns: "$1.36", "$31", "$120". */
+function shortDollars(cents: number): string {
+  const dollars = cents / 100;
+  return dollars >= 10 ? `$${Math.round(dollars)}` : formatDollars(cents);
+}
+
+/** "5d", "18h", "now" until an ISO time; null if unparseable. */
+function shortUntil(iso: string): string | null {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return "now";
+  const hours = ms / 3_600_000;
+  return hours < 24 ? `${Math.max(1, Math.round(hours))}h` : `${Math.round(hours / 24)}d`;
+}
+
+/**
+ * "Dec 1" in UTC (month boundaries are UTC, so it never shows "Nov 30").
+ * Used for resets at most a month away, so no year; `full` (tooltips) adds
+ * the weekday and year.
+ */
+function shortDate(iso: string, full = false): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+    ...(full ? { weekday: "short", year: "numeric" } : {}),
+  });
+}
+
+/** One meter row: label | bar | value | aside (reset time or ⚠). Details on hover. */
+function meterRow(opts: {
+  label: string;
+  pct: number | null;
+  value: string;
+  aside?: string;
+  alert?: boolean;
+  tooltip: string;
+}): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "meter";
+  row.title = opts.tooltip;
+  const name = document.createElement("span");
+  name.className = "meter-label";
+  name.textContent = opts.label;
+  const bar = document.createElement("div");
+  bar.className = "usage-bar";
+  const fill = document.createElement("div");
+  const shown = opts.pct == null ? 0 : Math.min(100, Math.max(0, opts.pct));
+  // Keep a sliver visible once anything is used.
+  fill.style.width = `${shown > 0 ? Math.max(shown, 1.5) : 0}%`;
+  if (shown >= 90) fill.classList.add("high");
+  bar.appendChild(fill);
+  const val = document.createElement("span");
+  val.className = "meter-value";
+  val.textContent = opts.value;
+  const aside = document.createElement("span");
+  aside.className = opts.alert ? "meter-aside alert" : "meter-aside";
+  aside.textContent = opts.aside ?? "";
+  row.append(name, bar, val, aside);
+  return row;
+}
+
+/** Fill a card's plan pill, status note and meters. Every field is optional. */
+function renderUsage(card: HTMLElement, usage: AccountUsage | undefined) {
+  const planSlot = card.querySelector<HTMLElement>(".plan-slot");
+  const note = card.querySelector<HTMLElement>(".side-note");
+  const box = card.querySelector<HTMLElement>(".usage");
+  if (!planSlot || !note || !box) return;
+  planSlot.replaceChildren();
+  planSlot.removeAttribute("title");
+  note.textContent = "";
+  box.replaceChildren();
+  box.classList.remove("loading");
+  box.removeAttribute("title");
+
+  if (!usage) {
+    box.classList.add("loading");
+    box.textContent = "Loading…";
+    return;
+  }
+
+  if (usage.planName) {
+    const pill = document.createElement("span");
+    pill.className = "plan-pill";
+    pill.textContent = usage.planName;
+    planSlot.appendChild(pill);
+  }
+  // Only problems go under the plan pill (e.g. "past due").
+  const status = usage.subscriptionStatus;
+  if (status && !/^(active|trialing)$/i.test(status)) note.textContent = status.replace(/_/g, " ");
+
+  const message = (text: string) => {
+    const d = document.createElement("div");
+    d.className = "usage-message";
+    d.textContent = text;
+    box.appendChild(d);
+  };
+  if (usage.status === "expired") {
+    message("Sign-in expired. Launch to refresh.");
+    return;
+  }
+  if (usage.status === "locked") {
+    // Key prompt denied or keyring unavailable; not retried automatically.
+    message("Locked. Right-click → Refresh usage.");
+    box.title = usage.detail ? `Couldn't unlock Cursor's saved login: ${usage.detail}` : "";
+    return;
+  }
+  if (usage.status !== "ok") {
+    planSlot.title = usage.detail ? `Usage unavailable: ${usage.detail}` : "Usage unavailable";
+    return;
+  }
+
+  const monthly = usage.monthlyResetsAt ? shortDate(usage.monthlyResetsAt) : null;
+
+  // Plan: included usage.
+  const used = usage.includedUsedCents;
+  const limit = usage.includedLimitCents;
+  const pct =
+    usage.usedPercent ??
+    (used != null && limit != null && limit > 0 ? (used / limit) * 100 : null);
+  if (pct != null || used != null) {
+    const until = usage.resetsAt ? shortUntil(usage.resetsAt) : null;
+    const tip: string[] = [];
+    if (pct != null) {
+      tip.push(
+        limit != null && limit > 0
+          ? `${percentText(pct)}% of ${formatDollars(limit)} included usage`
+          : `${percentText(pct)}% of included usage`,
+      );
+    } else if (used != null) {
+      tip.push(`${formatDollars(used)} of included usage`);
+    }
+    if (usage.bonusCents) tip.push(`+${formatDollars(usage.bonusCents)} bonus`);
+    if (usage.resetsAt) {
+      const when = shortDate(usage.resetsAt, true);
+      if (when) tip.push(`resets ${when}`);
+    }
+    box.appendChild(
+      meterRow({
+        label: "Plan",
+        pct,
+        value: pct != null ? `${percentText(pct)}%` : shortDollars(used ?? 0),
+        aside: until ? `↻ ${until}` : "",
+        tooltip: tip.join(" · "),
+      }),
+    );
+  }
+
+  // Extra: post-paid on-demand usage.
+  if (usage.onDemandEnabled) {
+    const odUsed = usage.onDemandUsedCents ?? 0;
+    const odLimit = usage.onDemandLimitCents;
+    const capped = odLimit != null && odLimit > 0;
+    const tip = capped
+      ? `On-demand: ${formatDollars(odUsed)} of ${formatDollars(odLimit)} limit`
+      : `On-demand: ${formatDollars(odUsed)}, no limit`;
+    box.appendChild(
+      meterRow({
+        label: "Extra",
+        pct: capped ? (odUsed / odLimit) * 100 : null,
+        value: capped ? `${shortDollars(odUsed)}/${shortDollars(odLimit)}` : shortDollars(odUsed),
+        aside: monthly ? `↻ ${monthly}` : "",
+        tooltip: monthly ? `${tip} · resets ${monthly}` : tip,
+      }),
+    );
+  }
+
+  // Credit: prepaid "additional usage".
+  if (usage.creditAvailableCents != null) {
+    const left = usage.creditAvailableCents;
+    const spent = usage.creditSpentMonthCents ?? 0;
+    const total = left + spent;
+    const over = usage.creditUncoveredCents ?? 0;
+    // The balance itself never resets; only the monthly spend counter does.
+    const tip = [
+      `${formatDollars(left)} credit left`,
+      monthly
+        ? `${formatDollars(spent)} used this month (counter resets ${monthly})`
+        : `${formatDollars(spent)} used this month`,
+    ];
+    if (usage.creditAutoTopUp) {
+      const amt = usage.creditTopUpAmountCents;
+      const at = usage.creditTopUpThresholdCents;
+      tip.push(
+        amt != null && at != null
+          ? `auto top-up ${formatDollars(amt)} below ${formatDollars(at)}`
+          : "auto top-up on",
+      );
+    }
+    if (over > 0) tip.push(`⚠ ${formatDollars(over)} used beyond credit`);
+    const alert = over > 0 || (left <= 0 && !usage.creditAutoTopUp);
+    box.appendChild(
+      meterRow({
+        label: "Credit",
+        pct: total > 0 ? (spent / total) * 100 : null,
+        value: shortDollars(left),
+        aside: alert ? "⚠" : "",
+        alert,
+        tooltip: tip.join(" · "),
+      }),
+    );
+  }
+
+  box.title = `Updated ${new Date(usage.fetchedAt).toLocaleTimeString()}`;
+}
+
+/** Fetch plan/usage for one account and update its card in place. */
+async function loadUsage(accountId: string, force: boolean) {
+  if (usageInFlight.has(accountId)) return;
+  const cached = usageCache.get(accountId);
+  const receivedAt = usageReceivedAt.get(accountId);
+  if (!force && cached && receivedAt != null) {
+    // render() runs on every poll; don't refetch each time. Only successes
+    // are cached by the backend; retry anything else (e.g. "expired" after
+    // Cursor refreshed the token) sooner.
+    const ttl = cached.status === "ok" ? 5 * 60_000 : 60_000;
+    if (Date.now() - receivedAt < ttl) return;
+  }
+  usageInFlight.add(accountId);
+  try {
+    // Not `call()`: a usage failure must never pop an error dialog.
+    const usage = await invoke<AccountUsage>("account_usage", { accountId, force });
+    usageCache.set(accountId, usage);
+  } catch {
+    usageCache.set(accountId, { status: "unavailable", fetchedAt: new Date().toISOString() });
+  } finally {
+    usageInFlight.delete(accountId);
+    usageReceivedAt.set(accountId, Date.now());
+  }
+  const card = accountCard(accountId);
+  if (card) renderUsage(card, usageCache.get(accountId));
 }
 
 async function refresh(opts?: { silent?: boolean; syncSelection?: boolean }) {
@@ -811,16 +1131,22 @@ async function waitForCursorState(
   return false;
 }
 
-async function doLaunch() {
+/**
+ * Make the selected account Cursor's current one. `open` (Launch) also starts
+ * Cursor; without it (Switch) the user opens Cursor themselves. Either way a
+ * running Cursor has to quit first, since it holds the auth database.
+ */
+async function doLaunch(open = true) {
   if (!selectedEnvId || !selectedAccountId || busy) return;
-  if (isActiveSelectionRunning()) return;
+  if (open && isActiveSelectionRunning()) return;
 
   const envChanging = state?.config.active.envId !== selectedEnvId;
   const accountChanging = state?.config.active.accountId !== selectedAccountId;
-  const needsRestart =
-    Boolean(state?.cursorRunning) && (envChanging || accountChanging);
+  if (!open && !envChanging && !accountChanging) return; // already current
+  const running = Boolean(state?.cursorRunning);
+  const needsRestart = running && (envChanging || accountChanging);
 
-  if (needsRestart || (envChanging && !state?.cursorRunning)) {
+  if (needsRestart || (envChanging && !running)) {
     const account = state?.config.accounts.find((a) => a.id === selectedAccountId);
     const env = state?.config.environments.find((e) => e.id === selectedEnvId);
     const label = account ? accountConfirmLabel(account) : "the selected account";
@@ -829,40 +1155,55 @@ async function doLaunch() {
     const message = envChanging
       ? `Activate the “${envName}” environment with the ${label} account?`
       : `Activate the ${label} account?`;
+    const tail = !running
+      ? ""
+      : open
+        ? "\n\nCursor will quit and reopen."
+        : "\n\nCursor will quit. Open it again when you’re ready.";
     const ok = await askConfirm(
       title,
-      state?.cursorRunning ? `${message}\n\nCursor will quit and reopen.` : message,
-      state?.cursorRunning ? "Restart" : "Switch",
+      message + tail,
+      running ? (open ? "Restart" : "Quit & switch") : "Switch",
       false,
     );
     if (!ok) return;
   }
 
   if (busy) return;
-  const mustQuit = needsRestart || Boolean(state?.cursorRunning);
+  const mustQuit = needsRestart || running;
+  const working = open ? "Launching…" : "Switching…";
+  const workingMessage = open ? "Cursor is launching…" : "Switching…";
   try {
     if (mustQuit) {
       // Dialog is already closed; show closing feedback before any quit IPC.
       await quitCursorWithUi();
     } else {
       busy = true;
-      busyLabel = "Launching…";
+      busyLabel = working;
       showError(null);
-      showSuccess("Cursor is launching…", { sticky: true });
+      showSuccess(workingMessage, { sticky: true });
       render();
       await yieldToPaint();
     }
 
-    busyLabel = "Launching…";
-    showSuccess("Cursor is launching…", { sticky: true });
+    busyLabel = working;
+    showSuccess(workingMessage, { sticky: true });
     render();
     await yieldToPaint();
 
+    const launchedId = selectedAccountId;
     state = await call<AppState>("launch", {
       envId: selectedEnvId,
-      accountId: selectedAccountId,
+      accountId: launchedId,
+      open,
     });
+    // Its usage may have been "expired" or read from an older token.
+    forgetUsage(launchedId);
 
+    if (!open) {
+      showSuccess("Switched. Open Cursor whenever you’re ready.");
+      return;
+    }
     const opened = await waitForCursorState(true, 45_000);
     if (opened) {
       state.cursorRunning = true;
@@ -1198,7 +1539,9 @@ window.addEventListener("DOMContentLoaded", () => {
       busyLabel = null;
     }
     await withBusy("Deleting…", async () => {
-      state = await call<AppState>("delete_account", { id: selectedAccountId });
+      const deletedId = selectedAccountId;
+      state = await call<AppState>("delete_account", { id: deletedId });
+      if (deletedId) forgetUsage(deletedId);
       selectedAccountId = state.config.active.accountId ?? null;
       userPickedAccount = false;
       showSuccess("Account deleted.");
@@ -1206,6 +1549,9 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   els.launch.addEventListener("click", () => void doLaunch());
+  els.switchBtn.addEventListener("click", () => void doLaunch(false));
+  els.error.addEventListener("click", hideToasts);
+  els.success.addEventListener("click", hideToasts);
 
   setupContextMenus();
   void setupFooterLinks();

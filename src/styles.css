@@ -10,6 +10,7 @@
   --danger: #e35d6a;
   --ok: #3ecf8e;
   --warn: #e6b84d;
+  --card: #121417;
   --radius: 10px;
   font-family: "SF Pro Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 14px;
@@ -33,6 +34,7 @@ body {
 }
 
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -208,7 +210,11 @@ button.primary {
 }
 
 button.primary.launch {
-  min-width: 148px;
+  min-width: 100px;
+}
+
+button.switch {
+  min-width: 76px;
 }
 
 button.primary:hover:not(:disabled) {
@@ -230,6 +236,8 @@ button.primary.danger {
   margin: 0;
   padding: 0;
   overflow: auto;
+  /* Keep the scrollbar's space reserved so cards don't shift when it appears. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -237,14 +245,16 @@ button.primary.danger {
 }
 
 .account-list li {
-  display: flex;
-  flex-direction: row;
+  /* avatar | name + email | plan + badge; meters span the row below */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  column-gap: 12px;
+  row-gap: 10px;
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: #121417;
+  background: var(--card);
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
@@ -255,7 +265,7 @@ button.primary.danger {
 
 .account-list li.selected {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, #121417);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
 }
 
 .account-list li.selected:hover {
@@ -263,6 +273,7 @@ button.primary.danger {
 }
 
 .account-list .avatar {
+  position: relative;
   flex-shrink: 0;
   width: 36px;
   height: 36px;
@@ -300,9 +311,121 @@ button.primary.danger {
   text-overflow: ellipsis;
 }
 
+/* Current account: green "online" dot on the avatar. The ring matches the
+   card background so the dot looks cut out of the avatar. */
+.account-list .avatar.is-current::after {
+  content: "";
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 2px solid var(--card);
+}
+
+.account-list li.selected .avatar.is-current::after {
+  border-color: color-mix(in srgb, var(--accent) 12%, var(--card));
+}
+
+.account-list .side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.account-list .side-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-list .plan-slot:empty,
+.account-list .side-note:empty,
+.account-list .usage:empty {
+  display: none;
+}
+
+/* Only shown for subscription problems, e.g. "past due". */
+.account-list .side-note {
+  color: var(--warn);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.account-list .usage {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.account-list .usage.loading {
+  opacity: 0.6;
+}
+
+.account-list .meter {
+  display: grid;
+  /* label | bar | value | reset; fixed columns so bars line up across cards */
+  grid-template-columns: 44px minmax(0, 1fr) 54px 52px;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-list .meter-value {
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-list .meter-aside {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.account-list .meter-aside.alert {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.account-list .usage-message {
+  color: var(--warn);
+}
+
+.plan-pill {
+  flex-shrink: 0;
+  font-size: 0.66rem;
+  font-weight: 650;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.usage-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.usage-bar > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ok);
+}
+
+.usage-bar > div.high {
+  background: var(--warn);
+}
+
 .badge {
   flex-shrink: 0;
-  margin-left: auto;
   display: inline-block;
   font-size: 0.68rem;
   font-weight: 600;
@@ -311,11 +434,6 @@ button.primary.danger {
   background: color-mix(in srgb, var(--warn) 20%, transparent);
   color: var(--warn);
   text-transform: lowercase;
-}
-
-.badge.current {
-  background: color-mix(in srgb, var(--ok) 22%, transparent);
-  color: var(--ok);
 }
 
 .env-disk {
@@ -350,10 +468,32 @@ button.primary.danger {
   padding: 8px 10px;
 }
 
-.hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.8rem;
+/* Messages float above the footer so showing one never resizes the list. */
+.toasts {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 70px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* Opaque so cards underneath don't show through. */
+.toast.success {
+  background: color-mix(in srgb, var(--ok) 14%, var(--panel));
+}
+
+.toast.error {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel));
 }
 
 .progress {
@@ -521,4 +661,33 @@ button.primary.danger {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Thin, dark scrollbars that match the theme (WebView2 and WebKitGTK; macOS
+   uses overlay scrollbars already). Don't add the standard scrollbar-width /
+   scrollbar-color properties: Chromium ignores these rules when they're set. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  /* 4px visible thumb: the transparent border pads it inside the 10px gutter */
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
 }

@@ -21,6 +21,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "6"
+base64 = "0.22"
 trash = "5"
 tauri-plugin-opener = "2"
 
@@ -29,6 +30,26 @@ sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 tauri-plugin-window-state = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", features = ["NSAttributedString", "NSDictionary", "NSString", "NSURL", "NSRange"] }
 objc2-app-kit = { version = "0.3.2", features = ["NSWindow", "NSScreen", "NSApplication", "NSAttributedString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+aes-gcm = "0.10"
+
+# Cursor token decryption on macOS and Linux (Chromium os_crypt, AES-128-CBC).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
+
+# safe_storage tests cover both formats on every platform.
+[dev-dependencies]
+aes = "0.8"
+aes-gcm = "0.10"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
