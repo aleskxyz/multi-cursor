@@ -48,13 +48,14 @@ runs:
         if [ -n "$TARGETS" ]; then rustup target add ${TARGETS//,/ }; fi
         rustc --version
 
-    # Only main saves the cache, so pull requests can't fill it up.
+    # Every run saves its cache. A pull request's cache is private to that
+    # pull request, so its next push reuses the compiled dependencies;
+    # GitHub evicts the oldest caches when the repository's quota is full.
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       if: inputs.native == 'true'
       with:
         workspaces: src-tauri
         key: ${{ inputs.cache-key }}
-        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install npm dependencies
       shell: bash
